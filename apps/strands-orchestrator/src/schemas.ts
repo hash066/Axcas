@@ -41,6 +41,14 @@ export const IntakeAssessmentSchema = z.object({
 }).strict();
 export type IntakeAssessment = z.infer<typeof IntakeAssessmentSchema>;
 
+// Business type is deliberately optional at the model boundary. Runtime code
+// derives the authoritative constrained value from the merchant transcript so
+// a model never needs to ask the customer to choose an internal enum.
+export const IntakeToolInputSchema = IntakeAssessmentSchema.extend({
+  businessType: BusinessTypeSchema.optional(),
+}).strict();
+export type IntakeToolInput = z.infer<typeof IntakeToolInputSchema>;
+
 export const MerchantWorkflowInputSchema = z.object({
   schemaVersion: z.literal(1),
   workflowId: identifier,

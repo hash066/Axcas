@@ -1,4 +1,5 @@
 import { SiteSpecV2Schema, type SiteSpecV2 } from "../../../packages/domain/src/growth";
+import { inferStudioBusinessType } from "../../../packages/domain/src/studio-builder";
 import {
   ApprovalResultSchema,
   BoundaryResultSchema,
@@ -6,6 +7,7 @@ import {
   CandidateResultSchema,
   ImprovementProposalSchema,
   IntakeAssessmentSchema,
+  IntakeToolInputSchema,
   MerchantWorkflowInputSchema,
   MetricsSchema,
   PublishedImprovementInputSchema,
@@ -58,6 +60,16 @@ export function actualMissingFacts(assessment: IntakeAssessment, suppliedAssets:
   return Array.from(missing);
 }
 
+export function resolveIntakeAssessment(value: unknown, transcript: string): IntakeAssessment {
+  const modelInput = IntakeToolInputSchema.parse(value);
+  const businessType = inferStudioBusinessType([
+    transcript,
+    modelInput.businessName,
+    modelInput.description,
+  ].filter((part): part is string => Boolean(part)).join(" "));
+  return IntakeAssessmentSchema.parse({ ...modelInput, businessType });
+}
+
 export function consolidatedQuestion(missing: MissingFact[]): string {
   const labels = missing.map((fact) => factLabels[fact]);
   const joined = labels.length === 1 ? labels[0] : `${labels.slice(0, -1).join(", ")}, and ${labels.at(-1)}`;
@@ -106,8 +118,8 @@ export function workflowVersionId(workflowId: string): string {
 
 export async function runMerchantWorkflow(inputValue: unknown, dependencies: WorkflowDependencies) {
   const input = MerchantWorkflowInputSchema.parse(inputValue);
-  const intakeResult = await dependencies.agent.invoke(intakePrompt(input), { structuredOutputSchema: IntakeAssessmentSchema });
-  const assessment = IntakeAssessmentSchema.parse(intakeResult.structuredOutput);
+  const intakeResult = await dependencies.agent.invoke(intakePrompt(input), { structuredOutputSchema: IntakeToolInputSchema });
+  const assessment = resolveIntakeAssessment(intakeResult.structuredOutput, input.transcript);
   const missingFacts = actualMissingFacts(assessment, input.assetIds);
   if (missingFacts.length) {
     return { status: "awaiting_input" as const, missingFacts, customerMessages: [consolidatedQuestion(missingFacts)] };

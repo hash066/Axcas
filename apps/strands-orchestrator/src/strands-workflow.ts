@@ -9,7 +9,7 @@ import {
   CandidateEnvelopeSchema,
   CandidateResultSchema,
   ImprovementProposalSchema,
-  IntakeAssessmentSchema,
+  IntakeToolInputSchema,
   MerchantWorkflowInputSchema,
   MetricsSchema,
   PublishedImprovementInputSchema,
@@ -24,6 +24,7 @@ import {
   actualMissingFacts,
   assertCandidateScope,
   consolidatedQuestion,
+  resolveIntakeAssessment,
   workflowVersionId,
   type AxcasBoundary,
 } from "./workflow";
@@ -64,7 +65,7 @@ class WorkflowToolState {
 
   async captureIntake(value: unknown) {
     if (this.stage !== "new") throw new Error("intake has already been captured");
-    const assessment = IntakeAssessmentSchema.parse(value);
+    const assessment = resolveIntakeAssessment(value, this.input.transcript);
     const missingFacts = actualMissingFacts(assessment, this.input.assetIds);
     if (missingFacts.length) {
       this.stage = "awaiting_input";
@@ -158,8 +159,8 @@ export function createWorkflowTools(inputValue: unknown, boundary: AxcasBoundary
   const tools = [
     tool({
       name: "capture_merchant_intake",
-      description: "Extract only supplied merchant facts, infer the constrained business type, save a complete intake, or return one consolidated missing-facts question.",
-      inputSchema: IntakeAssessmentSchema,
+      description: "Extract only supplied merchant facts. Business type is inferred by deterministic application code; never ask the merchant to choose an internal type. Save a complete intake or return one consolidated missing-facts question.",
+      inputSchema: IntakeToolInputSchema,
       callback: (value) => state.captureIntake(value),
     }),
     tool({

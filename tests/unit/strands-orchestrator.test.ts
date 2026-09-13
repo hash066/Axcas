@@ -188,6 +188,38 @@ describe("Strands merchant workflow", () => {
 });
 
 describe("native Strands typed-tool loop", () => {
+  it("deterministically infers business type when Nova omits the enum", async () => {
+    const api = boundary();
+    const workflow = createWorkflowTools(input, api);
+    const intakeTool = workflow.tools.find((item) => item.name === "capture_merchant_intake")!;
+    const { businessType: _modelGuess, ...withoutBusinessType } = assessment;
+
+    await expect(intakeTool.invoke(withoutBusinessType)).resolves.toMatchObject({ status: "intake_saved" });
+    expect(api.execute).toHaveBeenCalledWith("intake", expect.objectContaining({ businessType: "home_bakery" }), context);
+  });
+
+  it("returns one consolidated missing-facts question without asking for a business-type enum", async () => {
+    const api = boundary();
+    const { businessType: _modelGuess, ...withoutBusinessType } = assessment;
+    const scripted = new ScriptedStrandsModel([
+      { name: "capture_merchant_intake", input: withoutBusinessType },
+    ]);
+
+    const result = await runStrandsToolWorkflow({ ...input, assetIds: [] }, api, {}, (tools: Tool[]) => new Agent({
+      model: scripted,
+      tools,
+      toolExecutor: "sequential",
+      systemPrompt: "Follow the Axcas workflow tools in order.",
+    }));
+
+    expect(result).toEqual({
+      status: "awaiting_input",
+      missingFacts: ["photos"],
+      customerMessages: ["One quick thing before I build: can you send at least one real photo?"],
+    });
+    expect(api.execute).not.toHaveBeenCalled();
+  });
+
   it("executes the real Strands Agent loop with the guarded tools", async () => {
     const api = boundary();
     const scripted = new ScriptedStrandsModel([

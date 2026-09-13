@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 
 import { executeBridgeRequest, parseBridgeRequest } from "../../apps/axcas-tool-bridge/src/bridge";
 import { buildStudioWebsite } from "../../packages/domain/src/studio-builder";
@@ -228,8 +229,36 @@ describe("Axcas typed tool bridge", () => {
 
     expect(result.status).toBe("temporarily_unavailable");
     const diagnostic = JSON.parse(String(write.mock.calls[0]![0]));
-    expect(diagnostic).toMatchObject({ stage: "boundary_request", failure: "boundary_authentication" });
-    expect(JSON.stringify(diagnostic)).not.toMatch(/401|rotated|secret|ProofGate/i);
     write.mockRestore();
+    expect(diagnostic).toMatchObject({ stage: "boundary_request", failure: "boundary_authentication" });
+    expect(diagnostic).not.toHaveProperty("message");
+    expect(JSON.stringify(diagnostic)).not.toMatch(/rotated=|super-secret|ProofGate admin request/i);
+  });
+
+  it("classifies a wrapped tool validation failure without logging validation details", async () => {
+    const write = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const validation = z.object({ businessType: z.string() }).safeParse({});
+    if (validation.success) throw new Error("test fixture must fail validation");
+    const wrapped = new Error("tool failed with merchant payload", { cause: validation.error });
+
+    const result = await executeBridgeRequest(
+      {
+        action: "orchestrate_build",
+        context,
+        payload: { transcript: "Golden Crust is a home bakery in Hubli." },
+      },
+      vi.fn(),
+      {
+        PROOFGATE_ADMIN_URL: "https://example.workers.dev",
+        PROOFGATE_SERVICE_SECRET: "server-only-secret-material-12345",
+      },
+      async () => { throw wrapped; },
+    );
+
+    expect(result.status).toBe("temporarily_unavailable");
+    const diagnostic = JSON.parse(String(write.mock.calls[0]![0]));
+    write.mockRestore();
+    expect(diagnostic).toMatchObject({ stage: "workflow_execution", failure: "invalid_model_tool_output" });
+    expect(JSON.stringify(diagnostic)).not.toMatch(/businessType|merchant payload|Zod/i);
   });
 });

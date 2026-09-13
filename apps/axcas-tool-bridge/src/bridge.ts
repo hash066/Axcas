@@ -103,10 +103,18 @@ function normalizeBuildInput(payload: unknown, context: BridgeRequest["context"]
 }
 
 function failureClass(error: unknown, stage: DiagnosticStage): string {
-  if (error instanceof z.ZodError) return stage === "workflow_execution" ? "invalid_model_tool_output" : "invalid_input";
+  const hasZodFailure = (candidate: unknown, depth = 0): boolean => {
+    if (candidate instanceof z.ZodError) return true;
+    if (!candidate || typeof candidate !== "object" || depth >= 4) return false;
+    const nested = candidate as { name?: unknown; cause?: unknown };
+    if (nested.name === "ZodError") return true;
+    return hasZodFailure(nested.cause, depth + 1);
+  };
+  if (hasZodFailure(error)) return stage === "workflow_execution" ? "invalid_model_tool_output" : "invalid_input";
   const value = error && typeof error === "object" ? error as { name?: unknown; code?: unknown; message?: unknown } : {};
   const identity = `${typeof value.name === "string" ? value.name : ""}:${typeof value.code === "string" ? value.code : ""}`;
   const message = typeof value.message === "string" ? value.message : "";
+  if (stage === "workflow_execution" && message.startsWith("Strands workflow stopped before a safe terminal state")) return "incomplete_tool_workflow";
   if (stage === "boundary_request" && /failed \((?:401|403)\)/.test(message)) return "boundary_authentication";
   if (stage === "boundary_request" && /failed \(4\d\d\)/.test(message)) return "boundary_rejected";
   if (stage === "boundary_request" && /failed \(5\d\d\)/.test(message)) return "dependency_unavailable";
