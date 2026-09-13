@@ -1,0 +1,112 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">Axcas architecture</title>
+  <desc id="desc">A WhatsApp-first merchant flow coordinated by a Strands agent on AWS with typed tools, independent verification, deterministic release, and durable product data.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f7f3ea"/>
+      <stop offset="1" stop-color="#edf5f0"/>
+    </linearGradient>
+    <linearGradient id="hero" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#111827"/>
+      <stop offset="1" stop-color="#26364a"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#102117" flood-opacity=".10"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#6b7c71"/>
+    </marker>
+    <marker id="arrow-light" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#b8c8bf"/>
+    </marker>
+    <style>
+      .sans{font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+      .title{font-size:48px;font-weight:800;fill:#121716;letter-spacing:-1.5px}
+      .subtitle{font-size:21px;fill:#59635e}
+      .eyebrow{font-size:15px;font-weight:800;fill:#e95f3c;letter-spacing:2px}
+      .card-title{font-size:23px;font-weight:800;fill:#15201b}
+      .card-copy{font-size:16px;fill:#52605a}
+      .dark-title{font-size:25px;font-weight:800;fill:#fff}
+      .dark-copy{font-size:16px;fill:#d8e2dc}
+      .pill{font-size:14px;font-weight:700;fill:#325442}
+      .tiny{font-size:14px;fill:#68736d}
+      .dark-tiny{font-size:14px;fill:#d8e2dc}
+    </style>
+  </defs>
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <circle cx="1440" cy="80" r="230" fill="#f4c6a9" opacity=".30"/>
+  <circle cx="110" cy="830" r="250" fill="#bcd8c9" opacity=".34"/>
+
+  <g class="sans">
+    <text x="90" y="88" class="eyebrow">AGENTS FOR HUMANS · PROFESSIONAL AGENT</text>
+    <text x="90" y="145" class="title">Axcas turns one conversation into growth.</text>
+    <text x="90" y="184" class="subtitle">Strands coordinates the work. Independent code controls verification and release.</text>
+
+    <g filter="url(#shadow)">
+      <rect x="90" y="260" width="275" height="206" rx="28" fill="#fff" stroke="#dfe4df"/>
+      <circle cx="137" cy="307" r="22" fill="#dff3e7"/>
+      <path d="M127 300h20v14h-11l-7 6 2-6h-4z" fill="#248551"/>
+      <text x="176" y="314" class="card-title">Merchant</text>
+      <text x="125" y="361" class="card-copy">WhatsApp voice, photos,</text>
+      <text x="125" y="386" class="card-copy">prices and services</text>
+      <rect x="125" y="414" width="199" height="30" rx="15" fill="#f2f5f2"/>
+      <text x="144" y="435" class="pill">Optional Axcas Studio</text>
+    </g>
+
+    <path d="M365 363 H455" stroke="#6b7c71" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+
+    <g filter="url(#shadow)">
+      <rect x="470" y="230" width="410" height="266" rx="32" fill="url(#hero)"/>
+      <text x="510" y="278" class="eyebrow" fill="#ff9b74">STRANDS AGENTS SDK · AGENT LOOP</text>
+      <text x="510" y="319" class="dark-title">Axcas Orchestrator</text>
+      <text x="510" y="351" class="dark-copy">Goal + durable state</text>
+      <rect x="510" y="372" width="148" height="38" rx="19" fill="#344f43"/>
+      <text x="528" y="397" class="dark-copy">Model reasons</text>
+      <path d="M658 391 H704" stroke="#b8c8bf" stroke-width="2.5" fill="none" marker-end="url(#arrow-light)"/>
+      <rect x="710" y="372" width="130" height="38" rx="19" fill="#344f43"/>
+      <text x="730" y="397" class="dark-copy">Selects tool</text>
+      <path d="M775 412 C775 447 584 447 584 414" stroke="#b8c8bf" stroke-width="2" fill="none" marker-end="url(#arrow-light)"/>
+      <text x="625" y="444" class="dark-tiny">observe result · resume</text>
+      <text x="510" y="476" class="dark-tiny">Structured response · cannot approve or publish</text>
+    </g>
+
+    <path d="M880 363 H970" stroke="#6b7c71" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+
+    <g filter="url(#shadow)">
+      <rect x="985" y="260" width="525" height="206" rx="28" fill="#fff" stroke="#dfe4df"/>
+      <text x="1025" y="308" class="card-title">Typed Axcas tools</text>
+      <text x="1025" y="344" class="card-copy">Intake · candidate · verify · metrics</text>
+      <text x="1025" y="369" class="card-copy">No shell, raw credentials, or page code</text>
+      <rect x="1025" y="401" width="208" height="34" rx="17" fill="#edf5f0"/>
+      <text x="1047" y="423" class="pill">Tenant-bound actions</text>
+      <rect x="1245" y="401" width="225" height="34" rx="17" fill="#fff0e9"/>
+      <text x="1267" y="423" class="pill" fill="#8a3f29">One owner decision</text>
+    </g>
+
+    <path d="M1248 466 V547" stroke="#6b7c71" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+    <path d="M675 496 V547" stroke="#6b7c71" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+
+    <g filter="url(#shadow)">
+      <rect x="405" y="560" width="540" height="220" rx="28" fill="#fff" stroke="#dfe4df"/>
+      <text x="445" y="610" class="eyebrow">INDEPENDENT PROOF</text>
+      <text x="445" y="653" class="card-title">Builder → Verifier → Release policy</text>
+      <text x="445" y="691" class="card-copy">SiteSpec data only · public canary check</text>
+      <text x="445" y="716" class="card-copy">Exact candidate hash · deterministic promotion</text>
+      <rect x="445" y="738" width="452" height="4" rx="2" fill="#ef704e"/>
+    </g>
+
+    <g filter="url(#shadow)">
+      <rect x="980" y="560" width="530" height="220" rx="28" fill="#fff" stroke="#dfe4df"/>
+      <text x="1020" y="610" class="eyebrow">DURABLE PRODUCT STATE</text>
+      <text x="1020" y="653" class="card-title">Cloudflare · Convex · AWS</text>
+      <text x="1020" y="691" class="card-copy">Append-only projects, approvals and metrics</text>
+      <text x="1020" y="716" class="card-copy">API Gateway/SQS · EC2/Polly · S3/CloudWatch</text>
+      <rect x="1020" y="738" width="442" height="4" rx="2" fill="#4f8d6a"/>
+    </g>
+
+    <path d="M945 670 H980" stroke="#6b7c71" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+    <path d="M405 670 H268 V520" stroke="#6b7c71" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+
+    <text x="90" y="846" class="subtitle">The agent does the busywork quietly. The human sees progress, one preview, and one consequential decision.</text>
+  </g>
+</svg>
