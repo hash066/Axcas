@@ -22,7 +22,7 @@ Prerequisites are Node.js 22+, the EC2 instance role (or local AWS credential ch
 ```sh
 npm ci
 export AWS_REGION=ap-south-1
-export STRANDS_MODEL_ID=global.anthropic.claude-sonnet-4-6
+export AXCAS_STRANDS_MODEL_ID=global.anthropic.claude-sonnet-4-6
 export PROOFGATE_ADMIN_URL=https://proofgate-whatsapp-growth.proofgate-harshita.workers.dev
 export PROOFGATE_SERVICE_SECRET='<server-only secret>'
 export SITE_VERIFIER_URL='<credential-free verifier origin>'

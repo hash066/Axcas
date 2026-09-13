@@ -2,6 +2,18 @@
 
 Axcas turns a small business owner’s voice note, prices, services, photos, and reference reels into a verified business site and original reel system. WhatsApp remains the fastest path; `/studio` is a guided visual workspace for merchants who want to choose layouts, formats, and layers. ProofGate remains the internal verification and release engine name.
 
+## Agents for Humans entry
+
+Axcas enters the **Professional Agents** track. The hackathon-period Axcas product was created after 10 August 2026 on top of the older, disclosed ProofGate verification foundation; the repository history is intentionally preserved. The entry uses the official `@strands-agents/sdk` to coordinate typed intake, candidate, independent-verification, approval-request, metrics, and improvement tools. Strands cannot approve, promote, publish, run shell commands, or obtain provider credentials.
+
+- [Submission draft](docs/hackathon/SUBMISSION.md)
+- [Four-minute demo script](docs/hackathon/DEMO_SCRIPT.md)
+- [Architecture diagram](docs/hackathon/architecture.svg)
+- [AWS Builder post draft](docs/hackathon/BUILDER_POST.md)
+- [Truthful demo runbook](DEMO_RUNBOOK.md)
+
+The reel-template workspace adapts the entrant-authorized source recorded in [`apps/reel-template-worker/UPSTREAM.md`](apps/reel-template-worker/UPSTREAM.md). The Devpost entry must identify the source owner/team relationship or attach a durable written grant.
+
 The launch flow remains constrained:
 
 1. Hermes `v0.18.2` receives English voice, photos, and text through WhatsApp Business Cloud.
@@ -26,6 +38,23 @@ npm run dev:edge
 ```
 
 Copy `.env.example` to an ignored `.env` and fill only the provider values you own. The Worker remains useful without provider credentials but truthfully reports blocked provider actions.
+
+### Run the Strands orchestrator
+
+The orchestrator uses Strands Agents SDK `1.17.0` with Amazon Bedrock. The default model is `global.anthropic.claude-sonnet-4-6` in `ap-south-1`. Use an AWS identity allowed to invoke that model; never put AWS keys in the repository.
+
+```sh
+npm ci
+npm run start --workspace=@axcas/strands-orchestrator
+```
+
+It exposes the AgentCore-compatible runtime contract on loopback by default:
+
+- `GET /ping`
+- `POST /invocations` with `{ "mode": "build", "input": { ... } }`
+- `POST /invocations` with `{ "mode": "improvement", "input": { ... } }`
+
+The production WhatsApp bridge invokes the same `runStrandsToolWorkflow` code path through the bounded `orchestrate_build` action. Unit tests use a deterministic implementation of the public Strands model interface and execute the real Strands tool loop. A live Bedrock or AgentCore claim requires a separately recorded AWS invocation receipt.
 
 ## Hermes command boundary
 
@@ -57,6 +86,7 @@ Commands validate locally by default. Add `--submit` only from the configured He
 | `packages/reels` and `apps/reel-worker` | Polly voiceover and verified FFmpeg render |
 | `apps/reel-template-worker` | Owner-authorized Remotion compositions, private-asset adapter, and 1080×1920 render CLI |
 | `apps/edge-runtime` | Public routes, webhooks, tracked redirects, private admin boundary |
+| `apps/strands-orchestrator` | Strands reasoning/tool loop, guarded workflow state, Bedrock runtime contract |
 | `convex/growth.ts` | Durable events, approvals, consent, guardian claims, structured outcomes |
 | `hermes/skills/proofgate` | Hermes operating policy and typed commands |
 | `infra/` | Credential-gated Cloudflare and AWS foundation |
