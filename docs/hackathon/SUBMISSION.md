@@ -100,7 +100,7 @@ The Meta test number is not judge access: it rejects non-allowlisted numbers. A 
 ## Links to fill before submission
 
 - Live demo: `TODO`
-- Public repository: <https://github.com/hash066/ProofGate>
+- Public repository: <https://github.com/hash066/Axcas>
 - Demo video (public YouTube/Vimeo, no more than five minutes): `TODO`
 - Architecture image: `docs/hackathon/architecture.svg`
 - AWS Builder post: `TODO`

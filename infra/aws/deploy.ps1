@@ -2,7 +2,7 @@ param(
   [string]$Region = "ap-south-1",
   [string]$StackName = "proofgate-foundation",
   [Parameter(Mandatory = $true)][string]$RepositoryCommit,
-  [string]$RepositoryUrl = "https://github.com/hash066/ProofGate.git",
+  [string]$RepositoryUrl = "https://github.com/hash066/Axcas.git",
   [string]$AdminUrl = "https://proofgate-whatsapp-growth.proofgate-harshita.workers.dev",
   [string]$OperatorAlertEmail = ""
 )

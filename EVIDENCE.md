@@ -532,6 +532,7 @@ superseded by the 2026-08-08 provider foundation update above.
 - Added a separate two-tool learning invocation for metrics and an improvement proposal. Deterministic code first proves the exact public site version and spec hash. The proposal is append-only and cannot publish itself.
 - Wired the workflow into the authenticated Hermes Unix-socket bridge as `orchestrate_build` and added a loopback `/ping` plus AgentCore-compatible `/invocations` entrypoint. A local `/ping` smoke returned `Healthy`.
 - Tests exercise a real Strands `Agent` tool loop with a deterministic SDK `Model`, tool allowlisting and ordering, consolidated missing facts, verifier rejection, asset/claim constraints, approval pause, and published-version metrics gating. This is source/test evidence only: no CloudFormation update, EC2 rollout, live Bedrock model invocation, AgentCore deployment, or end-to-end WhatsApp acceptance is claimed by this receipt.
+- GitHub repository `hash066/ProofGate` was renamed in place to public `hash066/Axcas` on 2026-09-13. Git history was preserved and the local `origin` now targets `https://github.com/hash066/Axcas.git`; this is a product/submission identity change, not new runtime evidence.
 
 ## Session receipts log
 

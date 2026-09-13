@@ -1,7 +1,7 @@
 # Axcas teammate handoff
 
 **Authoritative snapshot:** 2 September 2026, Asia/Kolkata  
-**Repository:** <https://github.com/hash066/ProofGate>  
+**Repository:** <https://github.com/hash066/Axcas>
 **Implementation/evidence baseline:** `8faec3e003aba9c51b79446eb9cf33f87b844200`  
 **Public self-service readiness:** approximately 70%  
 
@@ -27,7 +27,7 @@ Customers must never provide API keys, hosting accounts or storage credentials.
 
 | Item | Current state |
 |---|---|
-| Remote | `https://github.com/hash066/ProofGate.git` |
+| Remote | `https://github.com/hash066/Axcas.git` |
 | Default branch | `main` |
 | Production working branch | `codex/axcas-production` |
 | Implementation/evidence baseline | `8faec3e003aba9c51b79446eb9cf33f87b844200` |
@@ -40,7 +40,7 @@ The latest functional commit is `a057b31` (`feat: harden reel call and media wor
 Start locally:
 
 ```powershell
-git clone https://github.com/hash066/ProofGate.git
+git clone https://github.com/hash066/Axcas.git
 cd ProofGate
 git switch main
 npm ci

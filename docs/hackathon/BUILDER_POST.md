@@ -40,6 +40,6 @@ Axcas is still intentionally constrained. It does not scrape leads, take payment
 
 Axcas was created during the Agents for Humans submission period. It builds on an earlier open-source ProofGate verification foundation, which supplied the capability-separated builder/verifier/release concept and append-only evidence model. We disclose that foundation rather than presenting it as hackathon work. The WhatsApp-first Axcas product, small-business workflow, tenant isolation, concise owner checklist, Studio companion, reel pipeline, provider boundaries, AWS runtime hardening, and Strands orchestration were built during the event. The public Git history preserves that boundary.
 
-Repository: <https://github.com/hash066/ProofGate>
+Repository: <https://github.com/hash066/Axcas>
 
 Live demo: **TODO before publishing**
