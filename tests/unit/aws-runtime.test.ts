@@ -119,10 +119,10 @@ describe("AWS Hermes runtime assets", () => {
     expect(template).toContain("PolicyName: AxcasStrandsBedrockInference");
     expect(template).toContain("bedrock:InvokeModel");
     expect(template).toContain("bedrock:InvokeModelWithResponseStream");
-    expect(template).toContain("foundation-model/anthropic.claude-sonnet-4-6*");
-    expect(template).toContain("inference-profile/global.anthropic.claude-sonnet-4-6*");
+    expect(template).toContain("foundation-model/amazon.nova-lite-v1:0");
+    expect(template).toContain("inference-profile/apac.amazon.nova-lite-v1:0");
     expect(template).not.toMatch(/Action:\s*\[?bedrock:\*/);
-    expect(unit).toContain("AXCAS_STRANDS_MODEL_ID=global.anthropic.claude-sonnet-4-6");
+    expect(unit).toContain("AXCAS_STRANDS_MODEL_ID=apac.amazon.nova-lite-v1:0");
   });
 
   it("alarms on relay failure and notifies an operator-owned SNS topic", async () => {

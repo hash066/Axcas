@@ -41,7 +41,7 @@ Copy `.env.example` to an ignored `.env` and fill only the provider values you o
 
 ### Run the Strands orchestrator
 
-The orchestrator uses Strands Agents SDK `1.17.0` with Amazon Bedrock. The default model is `global.anthropic.claude-sonnet-4-6` in `ap-south-1`. Use an AWS identity allowed to invoke that model; never put AWS keys in the repository.
+The orchestrator uses Strands Agents SDK `1.17.0` with Amazon Bedrock. The zero-onboarding default is `apac.amazon.nova-lite-v1:0` from `ap-south-1`; Claude Sonnet 4.6 is optional after Anthropic use-case registration. Use an AWS identity allowed to invoke only the selected model; never put AWS keys in the repository.
 
 ```sh
 npm ci

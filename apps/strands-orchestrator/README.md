@@ -22,7 +22,7 @@ Prerequisites are Node.js 22+, the EC2 instance role (or local AWS credential ch
 ```sh
 npm ci
 export AWS_REGION=ap-south-1
-export AXCAS_STRANDS_MODEL_ID=global.anthropic.claude-sonnet-4-6
+export AXCAS_STRANDS_MODEL_ID=apac.amazon.nova-lite-v1:0
 export PROOFGATE_ADMIN_URL=https://proofgate-whatsapp-growth.proofgate-harshita.workers.dev
 export PROOFGATE_SERVICE_SECRET='<server-only secret>'
 export SITE_VERIFIER_URL='<credential-free verifier origin>'
@@ -42,7 +42,7 @@ The expected terminal state is either `needs_facts` with one consolidated custom
 
 The `/ping` and `/invocations` paths match the Bedrock AgentCore runtime HTTP contract. On the current EC2 architecture, Hermes calls the same `runStrandsToolWorkflow` through the isolated Unix-socket tool bridge using the `orchestrate_build` action. The server binds to loopback by default.
 
-The sample contains placeholder immutable asset IDs. Replace them with assets registered for the authenticated test merchant before a live run. Do not put secrets in the sample or Git.
+The default is Amazon Nova Lite because it does not require a separate third-party model-use form. Anthropic Claude Sonnet 4.6 remains an operator-selectable model after the AWS account completes Anthropic's Bedrock use-case registration. The sample contains placeholder immutable asset IDs. Replace them with assets registered for the authenticated test merchant before a live run. Do not put secrets in the sample or Git.
 
 ## Test
 

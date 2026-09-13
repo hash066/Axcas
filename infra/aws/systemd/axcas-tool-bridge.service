@@ -11,7 +11,7 @@ WorkingDirectory=/opt/proofgate/ProofGate
 Environment=NODE_ENV=production
 Environment=AXCAS_BRIDGE_SOCKET=/run/axcas/tool-bridge.sock
 Environment=AWS_REGION=ap-south-1
-Environment=AXCAS_STRANDS_MODEL_ID=global.anthropic.claude-sonnet-4-6
+Environment=AXCAS_STRANDS_MODEL_ID=apac.amazon.nova-lite-v1:0
 EnvironmentFile=/etc/proofgate/axcas-tool-bridge.env
 RuntimeDirectory=axcas
 RuntimeDirectoryMode=0750

@@ -670,6 +670,8 @@ Resources:
               - Effect: Allow
                 Action: [bedrock:InvokeModel, bedrock:InvokeModelWithResponseStream]
                 Resource:
+                  - !Sub 'arn:${AWS::Partition}:bedrock:*::foundation-model/amazon.nova-lite-v1:0'
+                  - !Sub 'arn:${AWS::Partition}:bedrock:*:${AWS::AccountId}:inference-profile/apac.amazon.nova-lite-v1:0'
                   - !Sub 'arn:${AWS::Partition}:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6*'
                   - !Sub 'arn:${AWS::Partition}:bedrock:*:${AWS::AccountId}:inference-profile/global.anthropic.claude-sonnet-4-6*'
         - PolicyName: AxcasConsentedCallRecordings

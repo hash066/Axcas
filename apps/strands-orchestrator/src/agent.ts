@@ -15,7 +15,7 @@ Keep merchant-facing language concise, professional, and free of implementation 
 
 export function createStrandsAgent(env: NodeJS.ProcessEnv = process.env, tools: Tool[] = []): StructuredAgent {
   const model = new BedrockModel({
-    modelId: env.AXCAS_STRANDS_MODEL_ID ?? "global.anthropic.claude-sonnet-4-6",
+    modelId: env.AXCAS_STRANDS_MODEL_ID ?? "apac.amazon.nova-lite-v1:0",
     region: env.AWS_REGION ?? "ap-south-1",
     temperature: 0,
     maxTokens: 4_000,
