@@ -58,9 +58,10 @@ describe("Axcas studio domain", () => {
 
   it("formats one plain-language checklist per exact approval scope", () => {
     const release = formatApprovalChecklist({ type: "release", subject: "Maya Studio website", details: ["Preview checked", "WhatsApp enquiry buttons checked", "Only supplied claims and photos"] });
-    expect(release).toContain("Approval checklist");
-    expect(release).toContain("☑ Preview checked");
+    expect(release).toContain("Ready to publish — Maya Studio website");
+    expect(release).toContain("✓ Preview checked");
     expect(release).toContain("Approve publishes only this version");
+    expect(release).not.toMatch(/hash|credential|provider|command/i);
     expect(release.length).toBeLessThanOrEqual(1024);
   });
 });

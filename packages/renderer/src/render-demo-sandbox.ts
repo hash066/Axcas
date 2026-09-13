@@ -1,0 +1,38 @@
+import { buildWhatsAppDemoJourney, type DemoBeat } from "../../domain/src/demo-journey";
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  })[character]!);
+}
+
+function bubble(beat: DemoBeat): string {
+  const body = escapeHtml(beat.message)
+    .replace(/\[checked preview URL\]/g, '<span class="sample-link">Preview opens here in a live run ↗</span>')
+    .replace(/\[verified live site URL\]/g, '<span class="sample-link">Published site appears here in a live run ↗</span>')
+    .replace(/\[real page views\]/g, "128")
+    .replace(/\[real CTA clicks\]/g, "19")
+    .replace(/\n/g, "<br>");
+  return `<div class="bubble ${beat.actor}"><span>${beat.actor === "axcas" ? "AXCAS" : "YOU"}</span>${body}</div>`;
+}
+
+export function renderDemoSandbox(): string {
+  const journey = buildWhatsAppDemoJourney();
+  const visible = journey.filter((beat) => beat.actor !== "system");
+  const beforeApproval = visible.slice(0, 3);
+  const approval = visible.slice(3, 5);
+  const afterApproval = visible.slice(5);
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Axcas · Judge sandbox</title>
+<style>
+:root{color-scheme:light;--ink:#171713;--muted:#6e6b62;--paper:#f4f1e8;--card:#fffdf7;--accent:#f15a3b;--lime:#d9ff70;--line:#d8d2c4}*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}a{color:inherit}.nav{height:68px;display:flex;align-items:center;justify-content:space-between;max-width:1180px;margin:auto;padding:0 24px}.brand{font-size:24px;font-weight:900;letter-spacing:-1px;text-decoration:none}.navlinks{display:flex;gap:12px;align-items:center}.navlinks a{font-size:14px;font-weight:750;text-decoration:none;padding:10px 15px;border:1px solid var(--line);border-radius:999px;background:#fff}.navlinks .primary{background:var(--ink);color:#fff;border-color:var(--ink)}.banner{background:var(--lime);border-block:1px solid #b5d850;padding:10px 20px;text-align:center;font-size:13px;font-weight:800}.shell{max-width:1180px;margin:0 auto;padding:56px 24px 80px;display:grid;grid-template-columns:minmax(0,1fr) 430px;gap:64px;align-items:start}.eyebrow{color:var(--accent);font-size:13px;font-weight:900;letter-spacing:.14em;text-transform:uppercase}.hero h1{font-size:clamp(44px,6vw,78px);line-height:.94;letter-spacing:-.065em;margin:18px 0 24px;max-width:710px}.hero>p{font-size:20px;line-height:1.55;color:var(--muted);max-width:650px}.score{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:36px 0}.score div{background:rgba(255,255,255,.62);border:1px solid var(--line);border-radius:18px;padding:17px}.score strong{display:block;font-size:21px;margin-bottom:4px}.score span{font-size:12px;color:var(--muted)}.steps{display:grid;gap:12px;margin-top:32px}.steps details{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:0 18px;box-shadow:0 8px 30px rgba(43,37,24,.04)}.steps summary{cursor:pointer;font-weight:850;padding:18px 0}.steps p{color:var(--muted);line-height:1.55;margin:0 0 18px}.truth{margin-top:24px;font-size:13px!important;border-left:3px solid var(--accent);padding-left:14px}.phone{position:sticky;top:24px;background:#111;border:8px solid #111;border-radius:42px;padding:10px;box-shadow:0 28px 70px rgba(24,20,12,.22)}.screen{background:#efeae2;border-radius:28px;overflow:hidden;min-height:720px}.chathead{background:#075e54;color:#fff;padding:17px 18px;display:flex;gap:12px;align-items:center}.avatar{width:38px;height:38px;border-radius:50%;background:var(--lime);color:#14220c;display:grid;place-items:center;font-weight:950}.chathead strong{display:block}.chathead small{opacity:.8}.chapter{padding:14px 12px 2px;text-align:center;color:#827c70;font-size:10px;font-weight:850;letter-spacing:.1em}.bubble{max-width:88%;margin:9px 12px;padding:11px 12px;border-radius:12px;line-height:1.4;font-size:13px;white-space:normal;box-shadow:0 1px 2px rgba(0,0,0,.08)}.bubble span:first-child{display:block;color:#ee563b;font-size:9px;letter-spacing:.11em;font-weight:900;margin-bottom:5px}.bubble.merchant{margin-left:auto;background:#d9fdd3;border-top-right-radius:3px}.bubble.merchant span:first-child{color:#39743b}.bubble.axcas{background:#fff;border-top-left-radius:3px}.sample-link{display:inline-block;color:#075e54;font-weight:800;text-decoration:underline;margin-top:5px}.approval-buttons{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:0 12px 14px}.approval-buttons span{padding:10px;border:1px solid #c7c0b2;border-radius:10px;background:#fff;text-align:center;font-size:12px;font-weight:850;color:#075e54}.footnote{text-align:center;padding:15px;color:#8a8478;font-size:10px}@media(max-width:900px){.shell{grid-template-columns:1fr;gap:38px;padding-top:36px}.phone{position:relative;top:0;max-width:430px;margin:auto;width:100%}.hero h1{font-size:52px}.navlinks a:not(.primary){display:none}}@media(max-width:520px){.nav{padding:0 16px}.shell{padding-inline:16px}.hero h1{font-size:44px}.hero>p{font-size:17px}.score{grid-template-columns:1fr}.screen{min-height:620px}}
+</style></head><body>
+<nav class="nav"><a class="brand" href="/">axcas</a><div class="navlinks"><a href="/">Product</a><a class="primary" href="/studio">Open Studio</a></div></nav>
+<div class="banner">SANDBOX · Sample data · no WhatsApp messages sent · nothing is published</div>
+<main class="shell"><section class="hero"><div class="eyebrow">Interactive product walkthrough</div><h1>See the whole job happen in one chat.</h1><p>A no-login walkthrough for judges and beta testers. It uses representative sample copy to show the customer experience while the real WhatsApp number remains access-controlled.</p>
+<div class="score"><div><strong>1 bundle</strong><span>voice, text, and real photos</span></div><div><strong>1 decision</strong><span>the exact checked release</span></div><div><strong>0 setup</strong><span>no customer API keys</span></div></div>
+<div class="steps"><details open><summary>1 · Send what you already have</summary><p>Axcas infers the business type and gathers the useful facts from one natural bundle.</p></details><details><summary>2 · Review one checked preview</summary><p>Drafting and checks happen quietly. Customers receive the result, not infrastructure chatter.</p></details><details><summary>3 · Publish the exact version</summary><p>One signed checklist binds the owner, version, and action. Edits require a fresh check.</p></details><details><summary>4 · Learn and improve</summary><p>Reel ideas use supplied media; reports show raw views and WhatsApp clicks before suggesting changes.</p></details></div>
+<p class="truth">This walkthrough never publishes, sends a message, creates a lead, or fabricates provider evidence. Use <a href="/studio">Axcas Studio</a> for the authenticated product.</p></section>
+<aside class="phone" aria-label="Sample Axcas WhatsApp conversation"><div class="screen"><div class="chathead"><div class="avatar">A</div><div><strong>Axcas</strong><small>WhatsApp business agent</small></div></div><div class="chapter">ONE NATURAL BUNDLE</div>${beforeApproval.map(bubble).join("")}<div class="chapter">ONE PUBLISH DECISION</div>${approval.map(bubble).join("")}<div class="approval-buttons"><span>Publish</span><span>Change</span></div><div class="chapter">GROWTH LOOP</div>${afterApproval.map(bubble).join("")}<div class="footnote">Illustrative sandbox · sample metrics · no live actions</div></div></aside></main></body></html>`;
+}

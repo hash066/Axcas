@@ -27,7 +27,7 @@ export function renderProductHome(): string {
         <div class="eyebrow">For small businesses</div>
         <h1>Websites and reels, without the agency maze.</h1>
         <p class="lead">Start in WhatsApp for speed or use Axcas Studio for visual control. Your business details, real media, hosting, storage and feedback loop stay in one service.</p>
-        <div class="actions"><a class="button primary" data-pg="start-whatsapp" href="https://wa.me/15556537153?text=START%20AXCAS" rel="noopener noreferrer">Start in WhatsApp</a><a class="button secondary" data-pg="start-studio" href="/studio">Open Axcas Studio</a></div>
+        <div class="actions"><a class="button primary" data-pg="start-whatsapp" href="https://wa.me/15556537153?text=START%20AXCAS" rel="noopener noreferrer">Start in WhatsApp</a><a class="button secondary" data-pg="start-studio" href="/studio">Open Axcas Studio</a><a class="button secondary" data-pg="judge-demo" href="/demo">View judge sandbox</a></div>
         <p class="micro">Tailors · tutors · salons · home services · retailers · bakeries · and more</p>
       </div>
       <div class="phone" aria-label="Demo WhatsApp conversation">

@@ -45,6 +45,23 @@ export const WorkflowProgressSchema = z.enum([
 ]);
 export type WorkflowProgress = z.infer<typeof WorkflowProgressSchema>;
 
+const customerProgressCopy: Partial<Record<WorkflowProgress, string>> = {
+  message_received: "Got it — I’m building your draft now. I’ll message you when the checked preview is ready.",
+  preview_ready: "Your checked preview is ready. Review the details, prices, and WhatsApp button.",
+  published: "Your website is live. I’ll keep tracking visits and WhatsApp enquiries here.",
+  reel_ready: "Your reel is ready and has been returned here privately.",
+  temporary_retry: "I’ve saved everything you sent. I’m reconnecting and will continue automatically—you do not need to resend anything.",
+};
+
+/**
+ * Converts durable workflow state into deliberately sparse customer updates.
+ * Missing entries are internal milestones and must not create WhatsApp noise.
+ */
+export function customerProgressMessage(progress: WorkflowProgress): string | null {
+  const parsed = WorkflowProgressSchema.parse(progress);
+  return customerProgressCopy[parsed] ?? null;
+}
+
 export const InboundWorkflowSchema = z.object({
   schemaVersion: z.literal(1),
   workflowId: identifier,

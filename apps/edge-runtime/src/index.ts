@@ -13,6 +13,7 @@ import { deriveTenantIdentity, tenantScopedAssetId } from "../../../packages/dom
 import { DecisionPolicySchema, DecisionRequestSchema, evaluateDecision, type DecisionPolicyV1 } from "../../../packages/domain/src/decision-policy";
 import { renderBusinessSite } from "../../../packages/renderer/src/render-bakery-site";
 import { renderProductHome } from "../../../packages/renderer/src/render-product-home";
+import { renderDemoSandbox } from "../../../packages/renderer/src/render-demo-sandbox";
 import { renderStudio, renderStudioCss } from "../../../packages/renderer/src/render-studio";
 import { renderStudioClientJs } from "../../../packages/renderer/src/render-studio-client";
 import { renderDataDeletion, renderPrivacyPolicy, renderTermsOfService } from "../../../packages/renderer/src/render-legal";
@@ -602,6 +603,12 @@ export function createApp(evidenceBoundary: EvidenceBoundary = liveEvidenceBound
     metric: "whatsapp_messages", quantity: 1, evidenceRef: `meta:${providerMessageId}`, occurredAt: Date.now(),
   }, bindings);
   app.get("/", (context) => context.html(renderProductHome(), 200, {
+    "cache-control": "no-store",
+    "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+  }));
+  app.get("/demo", (context) => context.html(renderDemoSandbox(), 200, {
     "cache-control": "no-store",
     "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
     "referrer-policy": "no-referrer",

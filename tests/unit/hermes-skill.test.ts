@@ -7,8 +7,10 @@ describe("Axcas Hermes merchant experience", () => {
 
     expect(skill).toContain("`axcas_continue`");
     expect(skill).toContain("`axcas_status`");
-    expect(skill).toContain("I’ve saved your business details and photos");
+    expect(skill).toContain("I’ve saved everything you sent");
     expect(skill).toContain("Never show environment-variable names");
+    expect(skill).toContain("`notifyCustomer: false`");
+    expect(skill).toContain("send no reply for that tool result");
     expect(skill).not.toContain("npm run proofgate");
     expect(skill).not.toContain("PROOFGATE_SERVICE_SECRET");
   });

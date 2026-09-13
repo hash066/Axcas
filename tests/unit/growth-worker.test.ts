@@ -402,7 +402,7 @@ describe("growth Worker", () => {
     const result = await response.json() as any;
     expect(result).toMatchObject({ stage: "approval_required", siteId: expect.stringMatching(/^maya-studio-/), approval: { approvalId: expect.stringMatching(/^approval-/) } });
     expect(result.previewUrl).toMatch(/^http:\/\/proofgate\.test\/preview\/pgp_/);
-    expect(result.approval.checklist).toContain("Approval checklist");
+    expect(result.approval.checklist).toContain("Ready to publish");
     expect(admin.upsertMerchant).toHaveBeenCalledWith(expect.objectContaining({ businessType: "tailor" }), expect.stringMatching(/^aesgcm:v1:/), expect.anything());
     expect(admin.createCandidate).toHaveBeenCalledWith(expect.objectContaining({ actor: expect.stringMatching(/^studio:/), spec: expect.objectContaining({ businessType: "tailor" }) }), expect.anything());
     expect(admin.mintVerification).toHaveBeenCalledOnce();

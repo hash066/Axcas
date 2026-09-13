@@ -10,6 +10,7 @@ import {
   InboundWorkflowSchema,
   ProjectSyncCursorSchema,
   advanceWorkflow,
+  customerProgressMessage,
   nextProjectCursor,
 } from "../../packages/domain/src/workflow";
 import { studioProjectFromBusinessBrief } from "../../packages/domain/src/studio-builder";
@@ -91,6 +92,20 @@ describe("unified Axcas workflow foundation", () => {
       dedupeKey: "workflow-merchant-message-1:progress",
       createdAt: 2,
     })).toThrow();
+  });
+
+  it("keeps routine processing silent and emits only useful customer progress", () => {
+    expect(customerProgressMessage("message_received")).toBe(
+      "Got it — I’m building your draft now. I’ll message you when the checked preview is ready.",
+    );
+    expect(customerProgressMessage("brief_saved")).toBeNull();
+    expect(customerProgressMessage("media_saved")).toBeNull();
+    expect(customerProgressMessage("building")).toBeNull();
+    expect(customerProgressMessage("checking")).toBeNull();
+    expect(customerProgressMessage("approval_requested")).toBeNull();
+    expect(customerProgressMessage("published")).toBe(
+      "Your website is live. I’ll keep tracking visits and WhatsApp enquiries here.",
+    );
   });
 
   it("advances a stable cursor without dropping same-millisecond revisions", () => {

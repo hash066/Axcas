@@ -44,6 +44,7 @@ _FORBIDDEN_CUSTOMER_OUTPUT = tuple(re.compile(pattern, re.IGNORECASE | re.MULTIL
     r"[a-fA-F0-9]{48,}",
     r"\b(?:Authorization|Bearer)\s+[A-Za-z0-9._~+/=-]+",
     r"\b(?:provider authentication failed|raw provider details|gateway logs|stack trace|traceback)\b",
+    r"\b(?:shell command|backend credentials?|database connection|configure the backend|set up the server)\b",
     r"\bProofGate\b",
     r"Command Approval Required",
 ))
@@ -53,8 +54,10 @@ def filter_customer_output(response_text: str, platform: str) -> str:
     """Return customer-safe text for WhatsApp, replacing suspicious output."""
     if platform not in _WHATSAPP_PLATFORMS:
         return response_text
-    if not isinstance(response_text, str) or not response_text.strip():
+    if not isinstance(response_text, str):
         return SAFE_RETRY_MESSAGE
+    if not response_text.strip():
+        return response_text
     if any(pattern.search(response_text) for pattern in _FORBIDDEN_CUSTOMER_OUTPUT):
         return SAFE_RETRY_MESSAGE
     return response_text
@@ -116,7 +119,7 @@ def _call_bridge(action: str, payload: Any) -> str:
             key: result[key]
             for key in (
                 "status", "customerMessage", "merchantId", "previewUrl",
-                "previewExpiresAt", "specHash", "decision", "reason",
+                "previewExpiresAt", "specHash", "decision", "notifyCustomer",
             )
             if key in result
         }
@@ -129,6 +132,7 @@ def _call_bridge(action: str, payload: Any) -> str:
         return json.dumps({
             "status": "temporarily_unavailable",
             "customerMessage": SAFE_RETRY_MESSAGE,
+            "notifyCustomer": True,
         }, separators=(",", ":"))
 
 
@@ -138,6 +142,7 @@ def _handle_continue(params: dict[str, Any], **_kwargs: Any) -> str:
         return json.dumps({
             "status": "temporarily_unavailable",
             "customerMessage": SAFE_RETRY_MESSAGE,
+            "notifyCustomer": True,
         }, separators=(",", ":"))
     return _call_bridge(action, params["payload"])
 

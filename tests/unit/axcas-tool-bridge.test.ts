@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { executeBridgeRequest, parseBridgeRequest } from "../../apps/axcas-tool-bridge/src/bridge";
+import { buildStudioWebsite } from "../../packages/domain/src/studio-builder";
 
 const context = {
   platform: "whatsapp_cloud" as const,
@@ -53,7 +54,65 @@ describe("Axcas typed tool bridge", () => {
     );
 
     expect(result).toMatchObject({ status: "accepted", merchantId: "merchant-opaque" });
+    expect(result).toMatchObject({ notifyCustomer: false });
     expect(JSON.stringify(result)).not.toContain("server-only-secret");
+  });
+
+  it("keeps internal workflow receipts silent and avoids duplicate approval messages", async () => {
+    const submit = vi.fn(async () => ({ accepted: true, decision: "allow", reason: "PROOFGATE_SERVICE_SECRET was accepted" }));
+    const env = {
+      PROOFGATE_ADMIN_URL: "https://example.workers.dev",
+      PROOFGATE_SERVICE_SECRET: "server-only-secret-material-12345",
+    };
+
+    for (const action of ["policy", "decision", "request_verification", "request_publish"] as const) {
+      const payload = action === "request_publish"
+        ? { siteId: "maya-studio", merchantId: "merchant-opaque", versionId: "maya-v1", specHash: "a".repeat(64) }
+        : action === "request_verification"
+          ? { siteId: "maya-studio", merchantId: "merchant-opaque", versionId: "maya-v1", specHash: "a".repeat(64) }
+          : action === "policy"
+            ? { schemaVersion: 1, policyId: "policy-maya", merchantId: "merchant-opaque", ownerWaIdHash: "a".repeat(64), mode: "fast_pilot", autonomousActions: ["create_candidate"], createdAt: 1 }
+            : { schemaVersion: 1, merchantId: "merchant-opaque", action: "create_candidate" };
+      const result = await executeBridgeRequest({ action, context, payload }, submit, env);
+      expect(result.notifyCustomer).toBe(false);
+      expect(JSON.stringify(result)).not.toMatch(/PROOFGATE|credential|secret|provider/i);
+    }
+  });
+
+  it("returns one professional preview message and no internal result fields", async () => {
+    const built = buildStudioWebsite({
+      projectId: "project-maya-demo",
+      intent: "website",
+      businessName: "Maya Studio",
+      description: "Custom blouse stitching and alterations in Bengaluru.",
+      siteStyle: "portfolio",
+      referenceAssetIds: ["merchant-photo-one"],
+      orderWhatsAppNumber: "+919876543210",
+      fulfillmentArea: "Bengaluru",
+      leadTime: "Ready in five days",
+      offerings: [{ name: "Custom blouse", description: "Made to your measurements", currency: "INR" }],
+    }, { merchantId: "merchant-opaque", ownerWaIdHash: "a".repeat(64) });
+    const result = await executeBridgeRequest(
+      { action: "candidate", context, payload: { versionId: "maya-v1", spec: built.spec } },
+      async () => ({
+        previewUrl: "https://example.workers.dev/preview/signed-preview",
+        previewExpiresAt: 123,
+        specHash: "a".repeat(64),
+        providerDebug: "do not expose",
+      }),
+      {
+        PROOFGATE_ADMIN_URL: "https://example.workers.dev",
+        PROOFGATE_SERVICE_SECRET: "server-only-secret-material-12345",
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: "preview_ready",
+      notifyCustomer: true,
+      customerMessage: "Your website preview is ready. Check the business details, prices, and WhatsApp button.",
+      previewUrl: "https://example.workers.dev/preview/signed-preview",
+    });
+    expect(JSON.stringify(result)).not.toMatch(/providerDebug/);
   });
 
   it("maps provider and credential errors to one customer-safe response", async () => {
@@ -70,6 +129,7 @@ describe("Axcas typed tool bridge", () => {
     );
 
     expect(result.status).toBe("temporarily_unavailable");
+    expect(result.notifyCustomer).toBe(true);
     expect(JSON.stringify(result)).not.toMatch(/PROOFGATE|secret|401|provider/i);
   });
 });

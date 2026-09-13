@@ -13,6 +13,7 @@
   },
   "scripts": {
     "demo": "tsx scripts/demo-loop.mjs",
+    "demo:whatsapp": "tsx scripts/demo-whatsapp-journey.mjs",
     "intake": "tsx scripts/intake.mjs",
     "proofgate": "tsx apps/proofgate-cli/src/index.ts",
     "reel:render": "tsx scripts/render-reel.mjs",

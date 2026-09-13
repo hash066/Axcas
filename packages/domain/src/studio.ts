@@ -156,13 +156,19 @@ export type ApprovalChecklistInput = {
 export function formatApprovalChecklist(input: ApprovalChecklistInput): string {
   const subject = safeText.parse(input.subject).slice(0, 140);
   const details = z.array(safeText).min(1).max(8).parse(input.details);
+  const heading = {
+    release: "Ready to publish",
+    call_batch: "Ready to call",
+    reel: "Ready to render",
+    social_campaign: "Ready to schedule",
+  }[input.type];
   const consequence = {
     release: "Approve publishes only this version.",
     call_batch: "Approve starts only this consented call batch.",
     reel: "Approve renders only this reel; it is not posted.",
     social_campaign: "Approve schedules only these three listed variations.",
   }[input.type];
-  const checklist = [`Approval checklist — ${subject}`, ...details.map((detail) => `☑ ${detail}`), consequence, "Nothing else will run."].join("\n");
+  const checklist = [`${heading} — ${subject}`, ...details.map((detail) => `✓ ${detail}`), "", consequence, "Nothing else will run."].join("\n");
   if (checklist.length > 1024) throw new Error("approval checklist is too long for WhatsApp");
   return checklist;
 }

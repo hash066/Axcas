@@ -34,12 +34,12 @@ export type BridgeRequest = z.infer<typeof BridgeRequestSchema>;
 export type BridgeResult = {
   status: "accepted" | "preview_ready" | "approval_sent" | "temporarily_unavailable";
   customerMessage: string;
+  notifyCustomer: boolean;
   merchantId?: string;
   previewUrl?: string;
   previewExpiresAt?: number;
   specHash?: string;
   decision?: string;
-  reason?: string;
 };
 
 type Submit = (command: PreparedCommand, env: NodeJS.ProcessEnv) => Promise<unknown>;
@@ -87,26 +87,33 @@ function safeResult(action: BridgeRequest["action"], raw: unknown): BridgeResult
   if (action === "candidate" && typeof value.previewUrl === "string" && /^https:\/\//.test(value.previewUrl)) {
     return {
       status: "preview_ready",
-      customerMessage: "Your checked preview is ready.",
+      customerMessage: "Your website preview is ready. Check the business details, prices, and WhatsApp button.",
+      notifyCustomer: true,
       previewUrl: value.previewUrl,
       previewExpiresAt: typeof value.previewExpiresAt === "number" ? value.previewExpiresAt : undefined,
       specHash: typeof value.specHash === "string" ? value.specHash : undefined,
     };
   }
   if (action === "request_publish" || action === "call_batch" || action === "reel") {
-    return { status: "approval_sent", customerMessage: "Your final checklist is ready for approval." };
+    // The Worker sends the signed native-button checklist directly. Echoing a
+    // second Hermes acknowledgement would create approval spam.
+    return { status: "approval_sent", customerMessage: "", notifyCustomer: false };
   }
   if (action === "decision") {
     return {
       status: "accepted",
-      customerMessage: "Your preference has been applied.",
+      customerMessage: "",
+      notifyCustomer: false,
       decision: typeof value.decision === "string" ? value.decision : undefined,
-      reason: typeof value.reason === "string" ? value.reason : undefined,
     };
+  }
+  if (action === "metrics") {
+    return { status: "accepted", customerMessage: "Your activity summary is ready.", notifyCustomer: true };
   }
   return {
     status: "accepted",
-    customerMessage: action === "metrics" ? "Your activity summary is ready." : "Your progress has been saved.",
+    customerMessage: "",
+    notifyCustomer: false,
     merchantId: action === "intake" && typeof value.merchantId === "string" ? value.merchantId : undefined,
   };
 }
@@ -131,6 +138,6 @@ export async function executeBridgeRequest(
     return safeResult(request.action, result);
   } catch {
     process.stderr.write(`${JSON.stringify({ service: "axcas-tool-bridge", correlationId, outcome: "rejected_or_unavailable" })}\n`);
-    return { status: "temporarily_unavailable", customerMessage: SAFE_RETRY_MESSAGE };
+    return { status: "temporarily_unavailable", customerMessage: SAFE_RETRY_MESSAGE, notifyCustomer: true };
   }
 }
