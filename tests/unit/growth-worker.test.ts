@@ -516,7 +516,9 @@ describe("growth Worker", () => {
     expect(html).toContain('href="https://wa.me/15556537153?text=START%20AXCAS"');
     expect(html).toContain("Photos + offerings + voice note");
     expect(html).toContain("Private beta");
-    expect(html).toContain("AWS-hosted Hermes is live");
+    expect(html).toContain("Hosting, storage, and safety checks are active");
+    expect(html).toContain("New WhatsApp users open after final agent acceptance");
+    expect(html).not.toContain("AWS-hosted Hermes is live");
     expect(html).not.toContain("durable Hermes hosting");
     expect(html).toContain("For small businesses");
     expect(html).toContain('data-pg="start-studio"');

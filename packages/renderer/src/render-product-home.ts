@@ -67,7 +67,7 @@ export function renderProductHome(): string {
         <div><h2>Demo journey — not live merchant proof.</h2><p>This page shows the customer experience. A real merchant site is published only after their own content passes verification and they approve it.</p></div>
         <div class="checks">
           <div class="check"><strong>Working:</strong> WhatsApp intake, tenant isolation, catalog generation, verification, approvals, tracked CTAs, metrics, reel pipeline.</div>
-          <div class="check"><strong>Live foundation:</strong> AWS-hosted Hermes is live and the public Worker forwards through a fail-closed authenticated origin.</div>
+          <div class="check"><strong>Private-beta foundation:</strong> Hosting, storage, and safety checks are active. New WhatsApp users open after final agent acceptance.</div>
           <div class="check"><strong>Controlled beta:</strong> Meta-approved test recipients can complete the WhatsApp flow while production access is completed.</div>
           <div class="check"><strong>Still gated:</strong> Meta production-number access, one real merchant-media reel, and consented Vapi call acceptance.</div>
         </div>
