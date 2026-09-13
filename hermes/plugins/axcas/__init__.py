@@ -32,6 +32,7 @@ _ACTIONS = frozenset({
     "lead",
     "call_batch",
     "reel",
+    "orchestrate_build",
 })
 
 # This is a fail-closed customer-output policy, not a best-effort secret masker.

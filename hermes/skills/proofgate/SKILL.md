@@ -49,6 +49,8 @@ merchant work. Never construct an infrastructure instruction for the merchant to
 The Axcas tools bind the authenticated WhatsApp sender and current message under the hood;
 do not ask for or accept identity, credential, hosting, storage, or provider configuration.
 
+For a Website or Both request with the merchant's natural-language bundle and uploaded asset IDs, call `axcas_continue` once with `orchestrate_build`; Strands owns intake consolidation, candidate creation, independent verification, and the single release-approval request. Do not manually repeat those stages or narrate implementation progress.
+
 Use `axcas_continue` for `intake`, `policy`, `decision`, `candidate`,
 `request_verification`, `request_publish`, `lead`, `call_batch`, and `reel`. Use
 `axcas_status` only for the merchant's own activity summary. These tools validate the data

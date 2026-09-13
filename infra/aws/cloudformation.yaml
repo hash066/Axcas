@@ -663,6 +663,15 @@ Resources:
               - Effect: Allow
                 Action: [polly:SynthesizeSpeech]
                 Resource: '*'
+        - PolicyName: AxcasStrandsBedrockInference
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [bedrock:InvokeModel, bedrock:InvokeModelWithResponseStream]
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6*'
+                  - !Sub 'arn:${AWS::Partition}:bedrock:*:${AWS::AccountId}:inference-profile/global.anthropic.claude-sonnet-4-6*'
         - PolicyName: AxcasConsentedCallRecordings
           PolicyDocument:
             Version: '2012-10-17'

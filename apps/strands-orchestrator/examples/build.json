@@ -1,0 +1,18 @@
+{
+  "mode": "build",
+  "input": {
+    "schemaVersion": 1,
+    "workflowId": "workflow-live-demo-1",
+    "projectId": "project-live-demo-1",
+    "intent": "website",
+    "context": {
+      "platform": "whatsapp_cloud",
+      "userId": "919876543210",
+      "messageId": "wamid.replace-with-test-message"
+    },
+    "transcript": "Golden Crust sells fresh sourdough in Hubli for 180 rupees. Orders need 24 hours. Customers should message +919876543210.",
+    "assetIds": ["replace-with-registered-asset"],
+    "now": 1789300800000,
+    "improvementRequested": false
+  }
+}

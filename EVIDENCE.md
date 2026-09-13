@@ -526,6 +526,13 @@ superseded by the 2026-08-08 provider foundation update above.
 - A bearer-link click later appended an `acknowledged` row for run `spike-b-20260712085751067-cefc221a`. It has no Telegram provider update ID and does not independently authenticate the clicker, so it is preserved as development evidence only. After redeploying the current policy at 15:21 IST, the live projection correctly returned `submitted=true`, `dispatched=false`, `acknowledged=true`, passport `amber`, reason `EXTERNAL_ACKNOWLEDGMENT_PENDING`; the old dispatch identity does not match the canonical bound recipient.
 - Full verification at 15:17 IST passed 3 legacy tests and 18 Vitest tests with clean TypeScript. Live smoke checks returned HTTP 200 for `/health`, `/s/saturday-sessions`, and `/proof/saturday-sessions`; missing-token `/ack` correctly returned HTTP 400. The proof route remains truthfully gray.
 
+### Strands orchestration source gate — 2026-09-13
+
+- Added `apps/strands-orchestrator` using the official `@strands-agents/sdk` 1.17.0 and the Amazon Bedrock model adapter. The build agent receives exactly four typed tools for intake, candidate creation, independent-verifier dispatch, and release-approval request; its state guard stops at `awaiting_approval` and exposes no approval, promotion, shell, provider, payment, or publishing capability.
+- Added a separate two-tool learning invocation for metrics and an improvement proposal. Deterministic code first proves the exact public site version and spec hash. The proposal is append-only and cannot publish itself.
+- Wired the workflow into the authenticated Hermes Unix-socket bridge as `orchestrate_build` and added a loopback `/ping` plus AgentCore-compatible `/invocations` entrypoint. A local `/ping` smoke returned `Healthy`.
+- Tests exercise a real Strands `Agent` tool loop with a deterministic SDK `Model`, tool allowlisting and ordering, consolidated missing facts, verifier rejection, asset/claim constraints, approval pause, and published-version metrics gating. This is source/test evidence only: no CloudFormation update, EC2 rollout, live Bedrock model invocation, AgentCore deployment, or end-to-end WhatsApp acceptance is claimed by this receipt.
+
 ## Session receipts log
 
 | Timestamp | Session id | What was built | Notes |

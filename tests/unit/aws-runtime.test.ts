@@ -112,6 +112,19 @@ describe("AWS Hermes runtime assets", () => {
     expect(template).toContain("Resource: !Sub '${RecordingsBucket.Arn}/*'");
   });
 
+  it("grants the isolated Strands runtime only Bedrock model invocation", async () => {
+    const template = await readFile("infra/aws/cloudformation.yaml", "utf8");
+    const unit = await readFile("infra/aws/systemd/axcas-tool-bridge.service", "utf8");
+
+    expect(template).toContain("PolicyName: AxcasStrandsBedrockInference");
+    expect(template).toContain("bedrock:InvokeModel");
+    expect(template).toContain("bedrock:InvokeModelWithResponseStream");
+    expect(template).toContain("foundation-model/anthropic.claude-sonnet-4-6*");
+    expect(template).toContain("inference-profile/global.anthropic.claude-sonnet-4-6*");
+    expect(template).not.toMatch(/Action:\s*\[?bedrock:\*/);
+    expect(unit).toContain("AXCAS_STRANDS_MODEL_ID=global.anthropic.claude-sonnet-4-6");
+  });
+
   it("alarms on relay failure and notifies an operator-owned SNS topic", async () => {
     const template = await readFile("infra/aws/cloudformation.yaml", "utf8");
     const deploy = await readFile("infra/aws/deploy.ps1", "utf8");

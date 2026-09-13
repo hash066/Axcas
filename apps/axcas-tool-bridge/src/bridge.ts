@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import { prepareJsonCommand, submitCommand, type PreparedCommand } from "../../proofgate-cli/src/commands";
+import { ProofGateBoundary, runStrandsToolWorkflow } from "../../strands-orchestrator/src";
 
 export const SAFE_RETRY_MESSAGE = "Axcas hit a temporary connection problem. Your message is still in this chat, and I’ll continue automatically—you do not need to resend anything.";
 
@@ -22,6 +23,7 @@ const BridgeActionSchema = z.enum([
   "call_batch",
   "reel",
   "metrics",
+  "orchestrate_build",
 ]);
 
 const BridgeRequestSchema = z.object({
@@ -127,6 +129,23 @@ export async function executeBridgeRequest(
   try {
     const request = parseBridgeRequest(input);
     validatedOrigin(env);
+    if (request.action === "orchestrate_build") {
+      const value = request.payload && typeof request.payload === "object" ? request.payload as Record<string, unknown> : {};
+      const result = await runStrandsToolWorkflow({ ...value, context: request.context }, new ProofGateBoundary(env, submit));
+      if (result.status === "awaiting_input") {
+        return { status: "accepted", customerMessage: result.customerMessages[0]!, notifyCustomer: true };
+      }
+      if (result.status === "verification_failed") {
+        return { status: "accepted", customerMessage: "I found an issue while checking the preview. I’ll keep the current draft private until it passes.", notifyCustomer: true };
+      }
+      return {
+        status: "approval_sent",
+        customerMessage: "Your checked preview is ready. Review it, then use the single approval checklist I sent.",
+        previewUrl: result.previewUrl,
+        specHash: result.specHash,
+        notifyCustomer: true,
+      };
+    }
     const command = await prepare(request);
     const scopedEnv: NodeJS.ProcessEnv = {
       ...env,
