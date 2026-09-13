@@ -533,6 +533,7 @@ superseded by the 2026-08-08 provider foundation update above.
 - Wired the workflow into the authenticated Hermes Unix-socket bridge as `orchestrate_build` and added a loopback `/ping` plus AgentCore-compatible `/invocations` entrypoint. A local `/ping` smoke returned `Healthy`.
 - Tests exercise a real Strands `Agent` tool loop with a deterministic SDK `Model`, tool allowlisting and ordering, consolidated missing facts, verifier rejection, asset/claim constraints, approval pause, and published-version metrics gating. This is source/test evidence only: no CloudFormation update, EC2 rollout, live Bedrock model invocation, AgentCore deployment, or end-to-end WhatsApp acceptance is claimed by this receipt.
 - GitHub repository `hash066/ProofGate` was renamed in place to public `hash066/Axcas` on 2026-09-13. Git history was preserved and the local `origin` now targets `https://github.com/hash066/Axcas.git`; this is a product/submission identity change, not new runtime evidence.
+- Cloudflare Worker version `223c95b4-f9d6-4a8e-b51d-06ff3a16356f` was deployed on 2026-09-13 with the professional WhatsApp copy/output firewall and public read-only judge tour. Fresh checks returned HTTP 200 for `/`, `/demo`, and `/health`; `/demo` explicitly says its data is sample-only, performs no live action, and ships with `default-src 'none'` plus `form-action 'none'`. This is a deployed presentation surface, not a live Strands/Bedrock invocation or unrestricted merchant workspace.
 
 ## Session receipts log
 
