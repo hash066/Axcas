@@ -132,4 +132,104 @@ describe("Axcas typed tool bridge", () => {
     expect(result.notifyCustomer).toBe(true);
     expect(JSON.stringify(result)).not.toMatch(/PROOFGATE|secret|401|provider/i);
   });
+
+  it("normalizes a sparse WhatsApp build request under the authenticated sender", async () => {
+    const runWorkflow = vi.fn(async (input: unknown) => {
+      expect(input).toMatchObject({
+        schemaVersion: 1,
+        intent: "website",
+        transcript: "Maya Studio makes custom blouses in Bengaluru.",
+        assetIds: [],
+        context: {
+          platform: "whatsapp_cloud",
+          userId: "919876543210",
+          messageId: "wamid.HBgMOTE5ODc2NTQzMjEwFQIAERgSRTQx==",
+        },
+      });
+      expect(input).toMatchObject({
+        workflowId: expect.stringMatching(/^workflow-wa-[a-f0-9]{24}$/),
+        projectId: expect.stringMatching(/^project-wa-[a-f0-9]{24}$/),
+        now: expect.any(Number),
+      });
+      return {
+        status: "awaiting_input" as const,
+        missingFacts: ["photos"],
+        customerMessages: ["Please send at least one real business photo."],
+      };
+    });
+
+    const result = await executeBridgeRequest(
+      {
+        action: "orchestrate_build",
+        context: { ...context, messageId: "wamid.HBgMOTE5ODc2NTQzMjEwFQIAERgSRTQx==" },
+        payload: { transcript: "Maya Studio makes custom blouses in Bengaluru." },
+      },
+      vi.fn(),
+      {
+        PROOFGATE_ADMIN_URL: "https://example.workers.dev",
+        PROOFGATE_SERVICE_SECRET: "server-only-secret-material-12345",
+      },
+      runWorkflow,
+    );
+
+    expect(result).toMatchObject({
+      status: "accepted",
+      notifyCustomer: true,
+      customerMessage: "Please send at least one real business photo.",
+    });
+    expect(runWorkflow).toHaveBeenCalledOnce();
+  });
+
+  it("logs only a sanitized stage and failure class for runtime diagnosis", async () => {
+    const write = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const denied = Object.assign(new Error("PROOFGATE_SERVICE_SECRET=never-log-me"), {
+      name: "AccessDeniedException",
+    });
+
+    const result = await executeBridgeRequest(
+      {
+        action: "orchestrate_build",
+        context,
+        payload: { transcript: "Maya Studio makes custom blouses in Bengaluru." },
+      },
+      vi.fn(),
+      {
+        PROOFGATE_ADMIN_URL: "https://example.workers.dev",
+        PROOFGATE_SERVICE_SECRET: "server-only-secret-material-12345",
+      },
+      async () => { throw denied; },
+    );
+
+    expect(result.status).toBe("temporarily_unavailable");
+    expect(write).toHaveBeenCalledOnce();
+    const diagnostic = JSON.parse(String(write.mock.calls[0]![0]));
+    expect(diagnostic).toMatchObject({
+      service: "axcas-tool-bridge",
+      action: "orchestrate_build",
+      stage: "workflow_execution",
+      failure: "provider_permission",
+      outcome: "rejected_or_unavailable",
+    });
+    expect(diagnostic.correlationId).toMatch(/^[a-f0-9-]{36}$/);
+    expect(JSON.stringify(diagnostic)).not.toMatch(/PROOFGATE|secret|never-log|AccessDenied/i);
+    write.mockRestore();
+  });
+
+  it("classifies an admin 401 without logging its response body", async () => {
+    const write = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const result = await executeBridgeRequest(
+      { action: "intake", context, payload: intake },
+      async () => { throw new Error("ProofGate admin request failed (401): rotated=super-secret-value"); },
+      {
+        PROOFGATE_ADMIN_URL: "https://example.workers.dev",
+        PROOFGATE_SERVICE_SECRET: "server-only-secret-material-12345",
+      },
+    );
+
+    expect(result.status).toBe("temporarily_unavailable");
+    const diagnostic = JSON.parse(String(write.mock.calls[0]![0]));
+    expect(diagnostic).toMatchObject({ stage: "boundary_request", failure: "boundary_authentication" });
+    expect(JSON.stringify(diagnostic)).not.toMatch(/401|rotated|secret|ProofGate/i);
+    write.mockRestore();
+  });
 });

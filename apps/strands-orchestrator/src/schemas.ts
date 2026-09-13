@@ -50,10 +50,10 @@ export const MerchantWorkflowInputSchema = z.object({
   context: z.object({
     platform: z.enum(["whatsapp", "whatsapp_cloud"]),
     userId: z.string().regex(/^\d{8,15}$/),
-    messageId: identifier,
+    messageId: z.string().trim().min(1).max(512),
   }).strict(),
   transcript: z.string().trim().min(1).max(10_000),
-  assetIds: z.array(assetId).min(1).max(24),
+  assetIds: z.array(assetId).max(24),
   now: z.number().int().nonnegative(),
   improvementRequested: z.boolean().default(false),
 }).strict();

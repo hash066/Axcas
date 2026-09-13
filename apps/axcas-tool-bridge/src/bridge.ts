@@ -1,8 +1,13 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import { prepareJsonCommand, submitCommand, type PreparedCommand } from "../../proofgate-cli/src/commands";
-import { ProofGateBoundary, runStrandsToolWorkflow } from "../../strands-orchestrator/src";
+import {
+  MerchantWorkflowInputSchema,
+  ProofGateBoundary,
+  runStrandsToolWorkflow,
+  type MerchantWorkflowInput,
+} from "../../strands-orchestrator/src";
 
 export const SAFE_RETRY_MESSAGE = "Axcas hit a temporary connection problem. Your message is still in this chat, and I’ll continue automatically—you do not need to resend anything.";
 
@@ -45,6 +50,22 @@ export type BridgeResult = {
 };
 
 type Submit = (command: PreparedCommand, env: NodeJS.ProcessEnv) => Promise<unknown>;
+type BuildWorkflowOutcome =
+  | { status: "awaiting_input"; missingFacts: string[]; customerMessages: string[] }
+  | { status: "verification_failed"; previewUrl: string; blockers: string[] }
+  | { status: "awaiting_approval"; approvalId?: string; previewUrl: string; specHash: string; verificationRunId: string };
+type RunBuildWorkflow = (input: MerchantWorkflowInput, boundary: ProofGateBoundary) => Promise<BuildWorkflowOutcome>;
+type DiagnosticStage = "request_validation" | "configuration" | "workflow_input" | "workflow_execution" | "command_preparation" | "boundary_request";
+
+const SparseBuildPayloadSchema = MerchantWorkflowInputSchema.omit({ context: true }).partial({
+  schemaVersion: true,
+  workflowId: true,
+  projectId: true,
+  intent: true,
+  assetIds: true,
+  now: true,
+  improvementRequested: true,
+}).strict();
 
 export function parseBridgeRequest(value: unknown): BridgeRequest {
   return BridgeRequestSchema.parse(value);
@@ -60,6 +81,40 @@ function validatedOrigin(env: NodeJS.ProcessEnv): void {
   if (!env.PROOFGATE_SERVICE_SECRET || env.PROOFGATE_SERVICE_SECRET.length < 32) {
     throw new Error("bridge credential is unavailable");
   }
+}
+
+function stableId(prefix: "workflow-wa" | "project-wa", value: string): string {
+  return `${prefix}-${createHash("sha256").update(value).digest("hex").slice(0, 24)}`;
+}
+
+function normalizeBuildInput(payload: unknown, context: BridgeRequest["context"]): MerchantWorkflowInput {
+  const value = SparseBuildPayloadSchema.parse(payload);
+  return MerchantWorkflowInputSchema.parse({
+    ...value,
+    schemaVersion: 1,
+    workflowId: value.workflowId ?? stableId("workflow-wa", `${context.platform}:${context.userId}:${context.messageId}`),
+    projectId: value.projectId ?? stableId("project-wa", `${context.platform}:${context.userId}`),
+    intent: value.intent ?? "website",
+    context,
+    assetIds: value.assetIds ?? [],
+    now: value.now ?? Date.now(),
+    improvementRequested: value.improvementRequested ?? false,
+  });
+}
+
+function failureClass(error: unknown, stage: DiagnosticStage): string {
+  if (error instanceof z.ZodError) return stage === "workflow_execution" ? "invalid_model_tool_output" : "invalid_input";
+  const value = error && typeof error === "object" ? error as { name?: unknown; code?: unknown; message?: unknown } : {};
+  const identity = `${typeof value.name === "string" ? value.name : ""}:${typeof value.code === "string" ? value.code : ""}`;
+  const message = typeof value.message === "string" ? value.message : "";
+  if (stage === "boundary_request" && /failed \((?:401|403)\)/.test(message)) return "boundary_authentication";
+  if (stage === "boundary_request" && /failed \(4\d\d\)/.test(message)) return "boundary_rejected";
+  if (stage === "boundary_request" && /failed \(5\d\d\)/.test(message)) return "dependency_unavailable";
+  if (/AccessDenied|Unauthorized|Forbidden/i.test(identity)) return "provider_permission";
+  if (/Credential|ExpiredToken|InvalidClientToken|UnrecognizedClient/i.test(identity)) return "provider_authentication";
+  if (/ValidationException|ResourceNotFound|ModelNotReady|ModelError/i.test(identity)) return "provider_configuration";
+  if (/Timeout|Throttl|ECONN|ENOTFOUND|Fetch/i.test(identity)) return "dependency_unavailable";
+  return "unexpected_failure";
 }
 
 async function prepare(request: BridgeRequest): Promise<PreparedCommand> {
@@ -124,14 +179,21 @@ export async function executeBridgeRequest(
   input: unknown,
   submit: Submit = submitCommand,
   env: NodeJS.ProcessEnv = process.env,
+  runBuildWorkflow: RunBuildWorkflow = runStrandsToolWorkflow,
 ): Promise<BridgeResult> {
   const correlationId = randomUUID();
+  let action: BridgeRequest["action"] | "unknown" = "unknown";
+  let stage: DiagnosticStage = "request_validation";
   try {
     const request = parseBridgeRequest(input);
+    action = request.action;
+    stage = "configuration";
     validatedOrigin(env);
     if (request.action === "orchestrate_build") {
-      const value = request.payload && typeof request.payload === "object" ? request.payload as Record<string, unknown> : {};
-      const result = await runStrandsToolWorkflow({ ...value, context: request.context }, new ProofGateBoundary(env, submit));
+      stage = "workflow_input";
+      const workflowInput = normalizeBuildInput(request.payload, request.context);
+      stage = "workflow_execution";
+      const result = await runBuildWorkflow(workflowInput, new ProofGateBoundary(env, submit));
       if (result.status === "awaiting_input") {
         return { status: "accepted", customerMessage: result.customerMessages[0]!, notifyCustomer: true };
       }
@@ -146,6 +208,7 @@ export async function executeBridgeRequest(
         notifyCustomer: true,
       };
     }
+    stage = "command_preparation";
     const command = await prepare(request);
     const scopedEnv: NodeJS.ProcessEnv = {
       ...env,
@@ -153,10 +216,18 @@ export async function executeBridgeRequest(
       HERMES_SESSION_USER_ID: request.context.userId,
       HERMES_SESSION_MESSAGE_ID: request.context.messageId,
     };
+    stage = "boundary_request";
     const result = await submit(command, scopedEnv);
     return safeResult(request.action, result);
-  } catch {
-    process.stderr.write(`${JSON.stringify({ service: "axcas-tool-bridge", correlationId, outcome: "rejected_or_unavailable" })}\n`);
+  } catch (error) {
+    process.stderr.write(`${JSON.stringify({
+      service: "axcas-tool-bridge",
+      correlationId,
+      action,
+      stage,
+      failure: failureClass(error, stage),
+      outcome: "rejected_or_unavailable",
+    })}\n`);
     return { status: "temporarily_unavailable", customerMessage: SAFE_RETRY_MESSAGE, notifyCustomer: true };
   }
 }
