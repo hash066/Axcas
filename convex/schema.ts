@@ -130,9 +130,13 @@ export default defineSchema({
     requestId: v.string(),
     merchantId: v.string(),
     type: v.union(v.literal("export"), v.literal("deletion")),
-    status: v.literal("requested"),
+    // "requested" was the only permitted value while nothing processed these rows. A deletion
+    // request is now carried out at the edge, so it needs a terminal state to move into.
+    status: v.union(v.literal("requested"), v.literal("completed")),
     dueBy: v.number(),
     createdAt: v.number(),
+    completedAt: v.optional(v.number()),
+    deletedRecords: v.optional(v.number()),
   })
     .index("by_request_id", ["requestId"])
     .index("by_merchant_type", ["merchantId", "type"]),
@@ -294,6 +298,9 @@ export default defineSchema({
     scopeHash: v.string(),
     ownerWaIdHash: v.string(),
     providerMessageId: v.string(),
+    // The merchant-facing checklist exactly as it was sent on WhatsApp, so the mobile approval
+    // inbox shows the same words rather than reconstructing them from the approval type.
+    checklist: v.optional(v.string()),
     decision: v.union(v.literal("pending"), v.literal("approved"), v.literal("denied")),
     decidedAt: v.optional(v.number()),
     expiresAt: v.number(),

@@ -4,8 +4,8 @@ import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../convex/_generated/api";
 import { initialSpikeSiteSpec, SiteSpecSchema } from "../../../packages/domain/src/site-spec";
 import { BusinessBriefInputSchema, BusinessBriefSchema, LeadConsentSchema, ReelPlanSchema, SiteSpecV2Schema, type BusinessBriefV1, type LeadConsentV1, type ReelPlanV1, type SiteSpecV2 } from "../../../packages/domain/src/growth";
-import { StudioIntakeInputSchema, StudioIntentSchema, StudioProjectInputSchema, formatApprovalChecklist, type StudioIntent, type StudioProjectInput } from "../../../packages/domain/src/studio";
-import { CustomerOutboxMessageSchema, WorkflowProgressSchema, WorkflowStatusSchema, decodeProjectCursor, encodeProjectCursor, nextProjectCursor, type ProjectSyncCursor } from "../../../packages/domain/src/workflow";
+import { StudioIntakeInputSchema, StudioIntentSchema, StudioProjectInputSchema, formatApprovalChecklist, reelAngleLabel, siteDisplayName, type StudioIntent, type StudioProjectInput } from "../../../packages/domain/src/studio";
+import { CustomerOutboxMessageSchema, WorkflowProgressSchema, WorkflowStatusSchema, customerProgressMessage, decodeProjectCursor, encodeProjectCursor, nextProjectCursor, type ProjectSyncCursor } from "../../../packages/domain/src/workflow";
 import { quotaExceededCustomerMessage, type UsageMetric, type UsageReservationBatch } from "../../../packages/domain/src/usage";
 import { buildStudioReelPlan, buildStudioWebsite, MissingStudioFactsError, studioProjectFromBusinessBrief } from "../../../packages/domain/src/studio-builder";
 import { ReelRenderEvidenceSchema, type ReelRenderEvidence } from "../../../packages/domain/src/reel-evidence";
@@ -92,7 +92,8 @@ export type GrowthAdminBoundary = {
   createCandidate: (input: { spec: SiteSpecV2; versionId: string; parentVersionId?: string; specHash: string; actor: string }, bindings?: Bindings) => Promise<unknown>;
   getPreviewSite: (siteId: string, versionId: string, specHash: string, bindings?: Bindings) => Promise<{ spec: SiteSpecV2; versionId: string; specHash: string } | null>;
   registerLead: (merchantId: string, consent: LeadConsentV1, bindings?: Bindings) => Promise<unknown>;
-  createApproval: (input: { approvalId: string; merchantId: string; type: "release" | "call_batch" | "reel" | "social_campaign"; scopeHash: string; expiresAt: number }, bindings?: Bindings) => Promise<unknown>;
+  createApproval: (input: { approvalId: string; merchantId: string; type: "release" | "call_batch" | "reel" | "social_campaign"; scopeHash: string; expiresAt: number; checklist?: string }, bindings?: Bindings) => Promise<unknown>;
+  listMerchantApprovals: (merchantId: string, bindings?: Bindings) => Promise<Array<{ approvalId: string; type: "release" | "call_batch" | "reel" | "social_campaign"; checklist?: string; expiresAt: number; createdAt: number }>>;
   resolveStudioApproval: (input: { approvalId: string; merchantId: string; ownerWaIdHash: string; decision: "approved" | "denied"; providerMessageId: string }, bindings?: Bindings) => Promise<{ accepted: boolean; type?: "release" | "reel"; reelId?: string }>;
   attachApprovalMessage: (approvalId: string, providerMessageId: string, bindings?: Bindings) => Promise<unknown>;
   createCallBatch: (batch: CallBatch, approvalId: string, bindings?: Bindings) => Promise<unknown>;
@@ -123,13 +124,15 @@ export type GrowthAdminBoundary = {
   revokeStudioSession: (sessionHash: string, bindings?: Bindings) => Promise<{ revoked: boolean }>;
   listStudioSessions: (merchantId: string, currentSessionHash: string, bindings?: Bindings) => Promise<Array<{ deviceId: string; createdAt: number; expiresAt: number; current: boolean }>>;
   revokeStudioDevice: (input: { merchantId: string; deviceId: string }, bindings?: Bindings) => Promise<{ revoked: boolean }>;
-  createStudioDataRequest: (input: { requestId: string; merchantId: string; type: "export" | "deletion"; dueBy: number }, bindings?: Bindings) => Promise<{ requestId: string; status: "requested"; dueBy: number; created: boolean }>;
+  createStudioDataRequest: (input: { requestId: string; merchantId: string; type: "export" | "deletion"; dueBy: number }, bindings?: Bindings) => Promise<{ requestId: string; status: "requested" | "completed"; dueBy: number; created: boolean }>;
+  purgeMerchantContent: (input: { merchantId: string; requestId: string }, bindings?: Bindings) => Promise<{ deleted: number; unpublished: number; complete: boolean }>;
   saveStudioProject: (input: { projectId: string; revisionId: string; parentRevisionId?: string; merchantId: string; intent: StudioIntent; source: "whatsapp" | "studio"; project: StudioProjectInput }, bindings?: Bindings) => Promise<{ inserted: boolean; conflict: boolean; headRevisionId?: string }>;
   listStudioProjects: (merchantId: string, bindings?: Bindings) => Promise<Array<{ projectId: string; revisionId: string; parentRevisionId?: string; intent: StudioIntent; source: "whatsapp" | "studio"; project: StudioProjectInput; createdAt: number }>>;
   listStudioProjectChanges: (merchantId: string, cursor: ProjectSyncCursor | undefined, limit: number, bindings?: Bindings) => Promise<Array<{ projectId: string; revisionId: string; parentRevisionId?: string; intent: StudioIntent; source: "whatsapp" | "studio"; project: StudioProjectInput; createdAt: number }>>;
   beginInboundWorkflow: (input: { workflowId: string; merchantId: string; ownerWaIdHash: string; channel: "whatsapp_cloud"; providerMessageId: string }, bindings?: Bindings) => Promise<{ created: boolean; workflowId: string; status: string }>;
   recordWorkflowProgress: (input: { workflowId: string; eventId: string; status: string; progress: string; projectId?: string; intent?: StudioIntent }, bindings?: Bindings) => Promise<{ inserted: boolean; status: string }>;
   enqueueCustomerOutbox: (input: { outboxId: string; workflowId: string; merchantId: string; kind: "progress" | "missing_facts" | "approval" | "completion" | "retry"; body: string; dedupeKey: string }, bindings?: Bindings) => Promise<{ inserted: boolean; outboxId: string }>;
+  markCustomerOutboxSent: (input: { outboxId: string; status: "sent" | "failed"; providerMessageId?: string }, bindings?: Bindings) => Promise<{ updated: boolean }>;
   reserveUsage: (input: UsageReservationBatch, bindings?: Bindings) => Promise<{ allowed: boolean; blockingMetric?: UsageMetric }>;
   recordActualUsage: (input: { usageEntryId: string; idempotencyKey: string; operationId: string; merchantId: string; metric: UsageMetric; quantity: number; evidenceRef: string; occurredAt: number }, bindings?: Bindings) => Promise<{ inserted: boolean }>;
 };
@@ -346,6 +349,7 @@ const liveAdminBoundary: GrowthAdminBoundary = {
   },
   registerLead: (merchantId, consent, bindings) => adminClient(bindings).action((api as any).growth.adminRegisterLead, { serviceSecret: serviceSecret(bindings), merchantId, leadId: consent.leadId, phoneCiphertext: consent.phoneCiphertext, phoneHash: consent.phoneHash, country: consent.country, purpose: consent.purpose, source: consent.source, evidenceHash: consent.evidenceHash, grantedAt: consent.grantedAt, revokedAt: consent.revokedAt, localTimezone: consent.localTimezone, callWindowStartHour: consent.callWindow.startHour, callWindowEndHour: consent.callWindow.endHour, createdAt: Date.now() }),
   createApproval: (input, bindings) => adminClient(bindings).action((api as any).growth.adminCreateApproval, { serviceSecret: serviceSecret(bindings), ...input, providerMessageId: "pending", createdAt: Date.now() }),
+  listMerchantApprovals: (merchantId, bindings) => adminClient(bindings).action((api as any).growth.adminListMerchantApprovals, { serviceSecret: serviceSecret(bindings), merchantId }),
   resolveStudioApproval: (input, bindings) => adminClient(bindings).action((api as any).growth.adminResolveStudioApproval, { serviceSecret: serviceSecret(bindings), ...input, now: Date.now() }),
   attachApprovalMessage: (approvalId, providerMessageId, bindings) => adminClient(bindings).action((api as any).growth.adminAttachApprovalMessage, { serviceSecret: serviceSecret(bindings), approvalId, providerMessageId }),
   createCallBatch: (batch, approvalId, bindings) => adminClient(bindings).action((api as any).growth.adminCreateCallBatch, { serviceSecret: serviceSecret(bindings), ...batch, approvalId, createdAt: Date.now() }),
@@ -462,6 +466,9 @@ const liveAdminBoundary: GrowthAdminBoundary = {
   createStudioDataRequest: (input, bindings) => adminClient(bindings).action((api as any).growth.adminCreateStudioDataRequest, {
     serviceSecret: serviceSecret(bindings), ...input, createdAt: Date.now(),
   }),
+  purgeMerchantContent: (input, bindings) => adminClient(bindings).action((api as any).growth.adminPurgeMerchantContent, {
+    serviceSecret: serviceSecret(bindings), ...input,
+  }),
   saveStudioProject: (input, bindings) => adminClient(bindings).action((api as any).growth.adminSaveStudioProject, {
     serviceSecret: serviceSecret(bindings), projectId: input.projectId, revisionId: input.revisionId,
     parentRevisionId: input.parentRevisionId, merchantId: input.merchantId, intent: input.intent, source: input.source,
@@ -493,6 +500,9 @@ const liveAdminBoundary: GrowthAdminBoundary = {
       merchantId: message.merchantId, kind: message.kind, body: message.body, dedupeKey: message.dedupeKey, createdAt: message.createdAt,
     });
   },
+  markCustomerOutboxSent: (input, bindings) => adminClient(bindings).action((api as any).growth.adminMarkCustomerOutboxSent, {
+    serviceSecret: serviceSecret(bindings), ...input, updatedAt: Date.now(),
+  }),
   reserveUsage: (input, bindings) => adminClient(bindings).action((api as any).growth.adminReserveUsage, {
     serviceSecret: serviceSecret(bindings), ...input,
   }),
@@ -602,6 +612,42 @@ export function createApp(evidenceBoundary: EvidenceBoundary = liveEvidenceBound
     usageEntryId: `actual:${operationId}`, idempotencyKey: `actual:${operationId}`, operationId, merchantId,
     metric: "whatsapp_messages", quantity: 1, evidenceRef: `meta:${providerMessageId}`, occurredAt: Date.now(),
   }, bindings);
+  /**
+   * Sends one merchant-facing message exactly once and records the outcome.
+   *
+   * `customerOutbox` previously had an enqueue and no consumer, so a queued message was never
+   * delivered. Enqueueing still provides the dedupe ledger — a repeated dedupeKey means the
+   * message already went out — but the send happens inline and the row is closed out.
+   */
+  const deliverCustomerMessage = async (input: {
+    workflowId: string; merchantId: string; recipientWaId: string;
+    kind: "progress" | "missing_facts" | "approval" | "completion" | "retry";
+    body: string; dedupeKey: string;
+  }, bindings?: Bindings): Promise<{ delivered: boolean; reason?: string; providerMessageId?: string }> => {
+    if (!bindings?.META_PHONE_NUMBER_ID || !bindings.META_ACCESS_TOKEN) return { delivered: false, reason: "meta_not_configured" };
+    const queued = await adminBoundary.enqueueCustomerOutbox({
+      outboxId: input.dedupeKey, workflowId: input.workflowId, merchantId: input.merchantId,
+      kind: input.kind, body: input.body, dedupeKey: input.dedupeKey,
+    }, bindings);
+    if (!queued.inserted) return { delivered: false, reason: "duplicate" };
+    const operationId = `wa-out:${input.dedupeKey}`;
+    if (!(await reserveOutboundMessage(input.merchantId, operationId, bindings)).allowed) {
+      await adminBoundary.markCustomerOutboxSent({ outboxId: queued.outboxId, status: "failed" }, bindings);
+      return { delivered: false, reason: "usage_limit" };
+    }
+    try {
+      const receipt = await sendTextMessage({
+        graphApiVersion: bindings.META_GRAPH_API_VERSION ?? "v20.0", phoneNumberId: bindings.META_PHONE_NUMBER_ID,
+        accessToken: bindings.META_ACCESS_TOKEN, recipientWaId: input.recipientWaId, body: input.body,
+      });
+      await recordOutboundMessage(input.merchantId, operationId, receipt.providerMessageId, bindings);
+      await adminBoundary.markCustomerOutboxSent({ outboxId: queued.outboxId, status: "sent", providerMessageId: receipt.providerMessageId }, bindings);
+      return { delivered: true, providerMessageId: receipt.providerMessageId };
+    } catch {
+      await adminBoundary.markCustomerOutboxSent({ outboxId: queued.outboxId, status: "failed" }, bindings);
+      return { delivered: false, reason: "send_failed" };
+    }
+  };
   app.get("/", (context) => context.html(renderProductHome(), 200, {
     "cache-control": "no-store",
     "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
@@ -733,7 +779,19 @@ export function createApp(evidenceBoundary: EvidenceBoundary = liveEvidenceBound
     const requestId = `data-request-${crypto.randomUUID()}`;
     const dueBy = Date.now() + 30 * 86_400_000;
     const result = await adminBoundary.createStudioDataRequest({ requestId, merchantId: session.merchantId, type: "deletion", dueBy }, context.env);
-    return context.json({ status: result.status, requestId: result.requestId, dueBy: result.dueBy ?? dueBy }, 202, { "cache-control": "no-store" });
+    // The request used to be recorded and never acted on, so the 30-day promise had nothing
+    // behind it. Carry the deletion out now and report what was actually removed.
+    const purge = await adminBoundary.purgeMerchantContent({ merchantId: session.merchantId, requestId: result.requestId }, context.env);
+    return context.json({
+      status: purge.complete ? "completed" : "in_progress",
+      requestId: result.requestId,
+      deletedRecords: purge.deleted,
+      unpublishedSites: purge.unpublished,
+      ...(purge.complete ? {} : { dueBy: result.dueBy ?? dueBy }),
+    }, purge.complete ? 200 : 202, {
+      "cache-control": "no-store",
+      ...(purge.complete ? { "set-cookie": "axcas_session=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Lax" } : {}),
+    });
   });
   app.get("/api/studio/projects", async (context) => {
     const session = await studioSession(context.req.header("cookie"), context.env);
@@ -813,15 +871,16 @@ export function createApp(evidenceBoundary: EvidenceBoundary = liveEvidenceBound
     const approvalId = `approval-${crypto.randomUUID()}`;
     const requestId = `release-${crypto.randomUUID()}`;
     await adminBoundary.createReleaseRequest({ requestId, siteId: built.spec.siteId, merchantId: session.merchantId, versionId, specHash, scopeHash, approvalId }, context.env);
-    await adminBoundary.createApproval({ approvalId, merchantId: session.merchantId, type: "release", scopeHash, expiresAt: Date.now() + 86_400_000 }, context.env);
+    const releaseChecklist = formatApprovalChecklist({
+      type: "release", subject: `${built.spec.business.name} website`,
+      details: ["Private preview is ready", "Independent checks passed", "Only your supplied details and selected media will publish"],
+    });
+    await adminBoundary.createApproval({ approvalId, merchantId: session.merchantId, type: "release", scopeHash, expiresAt: Date.now() + 86_400_000, checklist: releaseChecklist }, context.env);
     return context.json({
       stage: "approval_required", siteId: built.spec.siteId, versionId, specHash, previewUrl, previewExpiresAt,
       approval: {
         approvalId,
-        checklist: formatApprovalChecklist({
-          type: "release", subject: `${built.spec.business.name} website`,
-          details: ["Private preview is ready", "Independent checks passed", "Only your supplied details and selected media will publish"],
-        }),
+        checklist: releaseChecklist,
       },
     }, 201, { "cache-control": "no-store" });
   });
@@ -847,11 +906,20 @@ export function createApp(evidenceBoundary: EvidenceBoundary = liveEvidenceBound
     if (!usage.allowed) return context.json({ stage: "usage_limit", message: quotaExceededCustomerMessage(usage.blockingMetric ?? "render_seconds") }, 429, { "cache-control": "no-store" });
     const approvalId = `approval-${crypto.randomUUID()}`;
     await adminBoundary.registerReel(built.plan, planHash, approvalId, context.env);
-    await adminBoundary.createApproval({ approvalId, merchantId: session.merchantId, type: "reel", scopeHash: planHash, expiresAt: Date.now() + 86_400_000 }, context.env);
+    const reelChecklist = formatApprovalChecklist({
+      type: "reel", subject: reelAngleLabel(built.plan.angle),
+      details: ["Uses only your selected photos", "15 seconds, full-screen vertical", "Your own hook, proof, and call to action", "Sent back to you privately — never posted"],
+    });
+    await adminBoundary.createApproval({ approvalId, merchantId: session.merchantId, type: "reel", scopeHash: planHash, expiresAt: Date.now() + 86_400_000, checklist: reelChecklist }, context.env);
     return context.json({
       stage: "approval_required", reelId: built.plan.reelId, recommendations: built.recommendations,
-      approval: { approvalId, checklist: formatApprovalChecklist({ type: "reel", subject: built.plan.angle, details: ["Uses only your selected photos", "15-second vertical render", "Your supplied hook, proof, CTA, and claims", "Returned privately; not posted" ] }) },
+      approval: { approvalId, checklist: reelChecklist },
     }, 201, { "cache-control": "no-store" });
+  });
+  app.get("/api/studio/approvals", async (context) => {
+    const session = await studioSession(context.req.header("cookie"), context.env);
+    if (!session) return context.text("Unauthorized", 401);
+    return context.json({ approvals: await adminBoundary.listMerchantApprovals(session.merchantId, context.env) }, 200, { "cache-control": "no-store" });
   });
   app.post("/api/studio/approvals/:approvalId", async (context) => {
     const session = await studioSession(context.req.header("cookie"), context.env);
@@ -1049,7 +1117,7 @@ export function createApp(evidenceBoundary: EvidenceBoundary = liveEvidenceBound
         const receipt = await sendTextMessage({
           graphApiVersion: context.env.META_GRAPH_API_VERSION ?? "v20.0", phoneNumberId: context.env.META_PHONE_NUMBER_ID,
           accessToken: context.env.META_ACCESS_TOKEN, recipientWaId: studioLink.senderWaId,
-          body: `✅ Browser linked. Your WhatsApp and Studio now share one workspace: ${new URL(context.req.url).origin}/studio`,
+          body: `✅ Your browser is connected. You can carry on here in WhatsApp, or pick up the same projects at ${new URL(context.req.url).origin}/studio`,
         });
         await recordOutboundMessage(tenant.merchantId, operationId, receipt.providerMessageId, context.env);
       }
@@ -1082,13 +1150,16 @@ export function createApp(evidenceBoundary: EvidenceBoundary = liveEvidenceBound
         merchantId: tenant.merchantId, operationId: `model-turn:${message.providerMessageId}`,
         idempotencyKey: `reserve:model-turn:${message.providerMessageId}`, requestedAt: Date.now(), reservations: [{ metric: "model_turns", quantity: 1 }],
       }, context.env);
-      return { workflowId, tenant, usage };
+      return { workflowId, tenant, usage, senderWaId: message.senderWaId };
     }))).filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
     const blocked = newMessages.filter(({ usage }) => !usage.allowed);
     if (blocked.length) {
-      await Promise.all(blocked.flatMap(({ workflowId, tenant, usage }) => [
+      await Promise.all(blocked.flatMap(({ workflowId, tenant, usage, senderWaId }) => [
         adminBoundary.recordWorkflowProgress({ workflowId, eventId: `${workflowId}:usage-limit`, status: "retrying", progress: "temporary_retry" }, context.env),
-        adminBoundary.enqueueCustomerOutbox({ outboxId: `${workflowId}:usage-limit`, workflowId, merchantId: tenant.merchantId, kind: "retry", body: quotaExceededCustomerMessage(usage.blockingMetric ?? "model_turns"), dedupeKey: `${workflowId}:usage-limit` }, context.env),
+        deliverCustomerMessage({
+          workflowId, merchantId: tenant.merchantId, recipientWaId: senderWaId, kind: "retry",
+          body: quotaExceededCustomerMessage(usage.blockingMetric ?? "model_turns"), dedupeKey: `${workflowId}:usage-limit`,
+        }, context.env),
       ]));
       return context.json({ accepted: true, stage: "usage_limit", message: quotaExceededCustomerMessage(blocked[0]!.usage.blockingMetric ?? "model_turns") }, 200);
     }
@@ -1098,6 +1169,13 @@ export function createApp(evidenceBoundary: EvidenceBoundary = liveEvidenceBound
     await Promise.all(created.map((workflow) => adminBoundary.recordWorkflowProgress({
       workflowId: workflow.workflowId, eventId: `${workflow.workflowId}:${forwarded.ok ? "forwarded" : "retrying"}`, status, progress,
     }, context.env)));
+    const receiptCopy = customerProgressMessage(progress);
+    if (receiptCopy) {
+      await Promise.all(newMessages.map(({ workflowId, tenant, senderWaId }) => deliverCustomerMessage({
+        workflowId, merchantId: tenant.merchantId, recipientWaId: senderWaId,
+        kind: forwarded.ok ? "progress" : "retry", body: receiptCopy, dedupeKey: `${workflowId}:${progress}`,
+      }, context.env)));
+    }
     return forwarded;
   });
   app.post("/webhooks/vapi", async (context) => {
@@ -1214,14 +1292,15 @@ export function createApp(evidenceBoundary: EvidenceBoundary = liveEvidenceBound
     const approvalId = `approval-${crypto.randomUUID()}`;
     const requestId = `release-${crypto.randomUUID()}`;
     await adminBoundary.createReleaseRequest({ requestId, siteId: payload.siteId, merchantId: payload.merchantId, versionId: payload.versionId, specHash: payload.specHash!, scopeHash, approvalId }, context.env);
-    await adminBoundary.createApproval({ approvalId, merchantId: payload.merchantId, type: "release", scopeHash, expiresAt: Date.now() + 86_400_000 }, context.env);
+    const releaseChecklist = formatApprovalChecklist({
+      type: "release", subject: `${siteDisplayName(payload.siteId)} website`, details: ["You reviewed the private preview", "Checked on a phone, including the WhatsApp button", "Only your own words, prices, and photos"],
+    });
+    await adminBoundary.createApproval({ approvalId, merchantId: payload.merchantId, type: "release", scopeHash, expiresAt: Date.now() + 86_400_000, checklist: releaseChecklist }, context.env);
     const recipientWaId = context.req.header("x-hermes-user-id")?.replace(/\D/g, "");
     if (!recipientWaId || !context.env?.META_PHONE_NUMBER_ID || !context.env.META_ACCESS_TOKEN) return context.json({ accepted: true, requestId, approvalId, scopeHash, delivery: "blocked_missing_meta_configuration" }, 202);
     const releaseMessageOperation = `wa-out:approval:${approvalId}`;
     if (!(await reserveOutboundMessage(payload.merchantId, releaseMessageOperation, context.env)).allowed) return context.json({ accepted: true, requestId, approvalId, scopeHash, delivery: "usage_limit", message: quotaExceededCustomerMessage("whatsapp_messages") }, 202);
-    const receipt = await sendApprovalButtons({ graphApiVersion: context.env.META_GRAPH_API_VERSION ?? "v20.0", phoneNumberId: context.env.META_PHONE_NUMBER_ID, accessToken: context.env.META_ACCESS_TOKEN, recipientWaId, approvalId, body: formatApprovalChecklist({
-      type: "release", subject: `${payload.siteId} website`, details: ["Private preview reviewed", "Mobile layout and WhatsApp buttons verified", "Only supplied claims and selected media"],
-    }) });
+    const receipt = await sendApprovalButtons({ graphApiVersion: context.env.META_GRAPH_API_VERSION ?? "v20.0", phoneNumberId: context.env.META_PHONE_NUMBER_ID, accessToken: context.env.META_ACCESS_TOKEN, recipientWaId, approvalId, body: releaseChecklist });
     await recordOutboundMessage(payload.merchantId, releaseMessageOperation, receipt.providerMessageId, context.env);
     await adminBoundary.attachApprovalMessage(approvalId, receipt.providerMessageId, context.env);
     return context.json({ accepted: true, requestId, approvalId, scopeHash, providerMessageId: receipt.providerMessageId }, 201);
@@ -1252,15 +1331,16 @@ export function createApp(evidenceBoundary: EvidenceBoundary = liveEvidenceBound
     if (!callUsage.allowed) return context.json({ accepted: false, stage: "usage_limit", message: quotaExceededCustomerMessage("call_cost_microusd") }, 429);
     const approvalId = `approval-${crypto.randomUUID()}`;
     await adminBoundary.createCallBatch(batch, approvalId, context.env);
-    await adminBoundary.createApproval({ approvalId, merchantId: batch.merchantId, type: "call_batch", scopeHash: batch.scopeHash, expiresAt: Date.now() + 86_400_000 }, context.env);
+    const callChecklist = formatApprovalChecklist({
+      type: "call_batch", subject: `${batch.leadIds.length} customer call${batch.leadIds.length === 1 ? "" : "s"}`,
+      details: ["Only people who agreed to be contacted", "One call each — nobody is called twice", `Total spend will not go above $${batch.costCapUsd.toFixed(2)}`, "Recording starts only if they say yes"],
+    });
+    await adminBoundary.createApproval({ approvalId, merchantId: batch.merchantId, type: "call_batch", scopeHash: batch.scopeHash, expiresAt: Date.now() + 86_400_000, checklist: callChecklist }, context.env);
     const recipientWaId = context.req.header("x-hermes-user-id")?.replace(/\D/g, "");
     if (!recipientWaId || !context.env?.META_PHONE_NUMBER_ID || !context.env?.META_ACCESS_TOKEN) return context.json({ accepted: true, approvalId, delivery: "blocked_missing_meta_configuration" }, 202);
     const callMessageOperation = `wa-out:approval:${approvalId}`;
     if (!(await reserveOutboundMessage(batch.merchantId, callMessageOperation, context.env)).allowed) return context.json({ accepted: true, approvalId, delivery: "usage_limit", message: quotaExceededCustomerMessage("whatsapp_messages") }, 202);
-    const receipt = await sendApprovalButtons({ graphApiVersion: context.env.META_GRAPH_API_VERSION ?? "v20.0", phoneNumberId: context.env.META_PHONE_NUMBER_ID, accessToken: context.env.META_ACCESS_TOKEN, recipientWaId, approvalId, body: formatApprovalChecklist({
-      type: "call_batch", subject: `${batch.leadIds.length} qualification call${batch.leadIds.length === 1 ? "" : "s"}`,
-      details: ["Merchant-supplied consent checked", "India/US policy checked", `One attempt per lead · cap $${batch.costCapUsd.toFixed(2)}`, "Recording starts only after spoken consent"],
-    }) });
+    const receipt = await sendApprovalButtons({ graphApiVersion: context.env.META_GRAPH_API_VERSION ?? "v20.0", phoneNumberId: context.env.META_PHONE_NUMBER_ID, accessToken: context.env.META_ACCESS_TOKEN, recipientWaId, approvalId, body: callChecklist });
     await recordOutboundMessage(batch.merchantId, callMessageOperation, receipt.providerMessageId, context.env);
     await adminBoundary.attachApprovalMessage(approvalId, receipt.providerMessageId, context.env);
     return context.json({ accepted: true, approvalId, providerMessageId: receipt.providerMessageId }, 201);
@@ -1282,14 +1362,15 @@ export function createApp(evidenceBoundary: EvidenceBoundary = liveEvidenceBound
     if (!reelUsage.allowed) return context.json({ accepted: false, stage: "usage_limit", message: quotaExceededCustomerMessage(reelUsage.blockingMetric ?? "render_seconds") }, 429);
     const approvalId = `approval-${crypto.randomUUID()}`;
     await adminBoundary.registerReel(plan, planHash, approvalId, context.env);
-    await adminBoundary.createApproval({ approvalId, merchantId: plan.merchantId, type: "reel", scopeHash: planHash, expiresAt: Date.now() + 86_400_000 }, context.env);
+    const whatsappReelChecklist = formatApprovalChecklist({
+      type: "reel", subject: reelAngleLabel(plan.angle), details: ["Uses only the photos you chose", "Says only what you told me", "Full-screen vertical, with text kept clear of the edges", "Sent back to you here — never posted for you"],
+    });
+    await adminBoundary.createApproval({ approvalId, merchantId: plan.merchantId, type: "reel", scopeHash: planHash, expiresAt: Date.now() + 86_400_000, checklist: whatsappReelChecklist }, context.env);
     const recipientWaId = context.req.header("x-hermes-user-id")?.replace(/\D/g, "");
     if (!recipientWaId || !context.env?.META_PHONE_NUMBER_ID || !context.env?.META_ACCESS_TOKEN) return context.json({ accepted: true, approvalId, planHash, delivery: "blocked_missing_meta_configuration" }, 202);
     const reelMessageOperation = `wa-out:approval:${approvalId}`;
     if (!(await reserveOutboundMessage(plan.merchantId, reelMessageOperation, context.env)).allowed) return context.json({ accepted: true, approvalId, planHash, delivery: "usage_limit", message: quotaExceededCustomerMessage("whatsapp_messages") }, 202);
-    const receipt = await sendApprovalButtons({ graphApiVersion: context.env.META_GRAPH_API_VERSION ?? "v20.0", phoneNumberId: context.env.META_PHONE_NUMBER_ID, accessToken: context.env.META_ACCESS_TOKEN, recipientWaId, approvalId, body: formatApprovalChecklist({
-      type: "reel", subject: plan.angle, details: ["Uses selected merchant media", "Claims checked against supplied facts", "9:16 render and safe overlays", "Returned privately; not auto-posted"],
-    }) });
+    const receipt = await sendApprovalButtons({ graphApiVersion: context.env.META_GRAPH_API_VERSION ?? "v20.0", phoneNumberId: context.env.META_PHONE_NUMBER_ID, accessToken: context.env.META_ACCESS_TOKEN, recipientWaId, approvalId, body: whatsappReelChecklist });
     await recordOutboundMessage(plan.merchantId, reelMessageOperation, receipt.providerMessageId, context.env);
     await adminBoundary.attachApprovalMessage(approvalId, receipt.providerMessageId, context.env);
     return context.json({ accepted: true, approvalId, planHash, providerMessageId: receipt.providerMessageId }, 201);
@@ -1305,9 +1386,13 @@ export function createApp(evidenceBoundary: EvidenceBoundary = liveEvidenceBound
     if (campaign.merchantId !== tenant.merchantId) return context.text("Hermes tenant identity mismatch", 403);
     const approvalId = `approval-${crypto.randomUUID()}`;
     await adminBoundary.registerSocialCampaign({ campaign, approvalId }, context.env);
+    const campaignChecklist = formatApprovalChecklist({
+      type: "social_campaign", subject: "three Instagram posts",
+      details: ["Exactly the three reels you approved", "Captions and posting times are fixed", "I check how they do after 2 hours, 1 day, and 3 days", "No extra posts and no silent changes"],
+    });
     await adminBoundary.createApproval({
       approvalId, merchantId: campaign.merchantId, type: "social_campaign", scopeHash: campaign.scopeHash,
-      expiresAt: Date.now() + 86_400_000,
+      expiresAt: Date.now() + 86_400_000, checklist: campaignChecklist,
     }, context.env);
     const recipientWaId = context.req.header("x-hermes-user-id")?.replace(/\D/g, "");
     if (!recipientWaId || !context.env?.META_PHONE_NUMBER_ID || !context.env.META_ACCESS_TOKEN) {
@@ -1318,7 +1403,7 @@ export function createApp(evidenceBoundary: EvidenceBoundary = liveEvidenceBound
     const receipt = await sendApprovalButtons({
       graphApiVersion: context.env.META_GRAPH_API_VERSION ?? "v20.0", phoneNumberId: context.env.META_PHONE_NUMBER_ID,
       accessToken: context.env.META_ACCESS_TOKEN, recipientWaId, approvalId,
-      body: formatApprovalChecklist({ type: "social_campaign", subject: "Instagram three-variation experiment", details: ["Exactly three approved reels", "Captions and schedules locked", "2h, 24h and 72h checks", "No fourth post or silent edits"] }),
+      body: campaignChecklist,
     });
     await recordOutboundMessage(campaign.merchantId, campaignMessageOperation, receipt.providerMessageId, context.env);
     await adminBoundary.attachApprovalMessage(approvalId, receipt.providerMessageId, context.env);

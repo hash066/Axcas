@@ -1,0 +1,26 @@
+{
+  "name": "@axcas/mobile",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Merchant-facing Axcas mobile app: WhatsApp-linked sign-in, projects, approvals, and RevenueCat-gated capability.",
+  "main": "index.ts",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "expo": "~57.0.23",
+    "expo-status-bar": "~57.0.1",
+    "react": "19.2.3",
+    "react-native": "0.86.3",
+    "react-native-purchases": "^10.9.1",
+    "react-native-safe-area-context": "~5.7.0"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.2",
+    "typescript": "~6.0.3"
+  }
+}

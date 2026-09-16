@@ -9,5 +9,8 @@
     "types": ["@cloudflare/workers-types", "node"],
     "noEmit": true
   },
-  "include": ["apps/**/*.ts", "packages/**/*.ts", "tests/**/*.ts"]
+  "include": ["apps/**/*.ts", "packages/**/*.ts", "tests/**/*.ts"],
+  // The mobile app compiles against React Native and React 19 types, which are incompatible
+  // with this project's Workers/Node `types` list. It is typechecked by its own tsconfig.
+  "exclude": ["apps/axcas-mobile/**"]
 }

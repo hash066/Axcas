@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 
 import { internal } from "./_generated/api";
-import { action, internalMutation, mutation, query } from "./_generated/server";
+import { action, internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import { assertImmutableAssetRegistration, validateStoredAssetMetadata } from "./asset_policy";
 import { FOUNDING_BETA_PLAN, aggregateBillableUsage, evaluateQuota, usagePeriodStart, type UsageEntry, type UsageMetric } from "../packages/domain/src/usage";
 import { mustRevokeLead, recordingConsentFromVapi } from "../packages/calls/src/attempts";
@@ -178,7 +178,10 @@ export const createStudioDataRequestInternal = internalMutation({
       if (sameId.merchantId !== args.merchantId || sameId.type !== args.type || sameId.dueBy !== args.dueBy) throw new Error("immutable Studio data request conflict");
       return { requestId: sameId.requestId, status: sameId.status, dueBy: sameId.dueBy, created: false };
     }
-    const open = (await context.db.query("studioDataRequests").withIndex("by_merchant_type", (range) => range.eq("merchantId", args.merchantId).eq("type", args.type)).order("desc").collect())[0];
+    // Only an unfinished request blocks a new one. Matching on the latest row regardless of
+    // status would let one completed deletion bar the merchant from ever requesting another.
+    const open = (await context.db.query("studioDataRequests").withIndex("by_merchant_type", (range) => range.eq("merchantId", args.merchantId).eq("type", args.type)).order("desc").collect())
+      .find((request) => request.status === "requested");
     if (open) return { requestId: open.requestId, status: open.status, dueBy: open.dueBy, created: false };
     await context.db.insert("studioDataRequests", { ...args, status: "requested" });
     return { requestId: args.requestId, status: "requested" as const, dueBy: args.dueBy, created: true };
@@ -191,10 +194,119 @@ export const adminCreateStudioDataRequest = action({
     type: v.union(v.literal("export"), v.literal("deletion")),
     dueBy: v.number(), createdAt: v.number(),
   },
-  handler: async (context, args): Promise<{ requestId: string; status: "requested"; dueBy: number; created: boolean }> => {
+  handler: async (context, args): Promise<{ requestId: string; status: "requested" | "completed"; dueBy: number; created: boolean }> => {
     requireServiceSecret(args.serviceSecret);
     const { serviceSecret: _secret, ...record } = args;
     return context.runMutation(internal.growth.createStudioDataRequestInternal, record);
+  },
+});
+
+/**
+ * Removes the merchant-controlled content behind a deletion request.
+ *
+ * Scope follows docs/privacy-and-consent.md: a takedown "removes the public site/media promptly
+ * while preserving redacted append-only release and consent evidence where legally required".
+ * So Studio projects, sessions, media, workflows, and drafts are erased; releases, approvals,
+ * lead consents, call records, and usage entries are kept; and published sites are unpublished
+ * rather than deleted, because the append-only release evidence still points at them.
+ *
+ * Work is budgeted per call so one mutation cannot exceed Convex limits. The caller repeats
+ * until `complete` is true.
+ */
+export const purgeMerchantContentInternal = internalMutation({
+  args: { merchantId: v.string(), limit: v.number() },
+  handler: async (context, { merchantId, limit }) => {
+    let budget = Math.max(1, Math.min(limit, 400));
+    let deleted = 0;
+
+    const projects = await context.db.query("studioProjects").withIndex("by_merchant_created", (range) => range.eq("merchantId", merchantId)).take(budget);
+    for (const row of projects) { await context.db.delete(row._id); deleted += 1; }
+    budget -= projects.length;
+
+    if (budget > 0) {
+      const heads = await context.db.query("studioProjectHeads").withIndex("by_merchant_updated", (range) => range.eq("merchantId", merchantId)).take(budget);
+      for (const row of heads) { await context.db.delete(row._id); deleted += 1; }
+      budget -= heads.length;
+    }
+
+    if (budget > 0) {
+      const sessions = await context.db.query("studioSessions").withIndex("by_merchant", (range) => range.eq("merchantId", merchantId)).take(budget);
+      for (const row of sessions) { await context.db.delete(row._id); deleted += 1; }
+      budget -= sessions.length;
+    }
+
+    if (budget > 0) {
+      const assets = await context.db.query("mediaAssets").withIndex("by_merchant", (range) => range.eq("merchantId", merchantId)).take(budget);
+      for (const row of assets) {
+        if (row.convexStorageId) await context.storage.delete(row.convexStorageId);
+        await context.db.delete(row._id);
+        deleted += 1;
+      }
+      budget -= assets.length;
+    }
+
+    if (budget > 0) {
+      const workflows = await context.db.query("inboundWorkflows").withIndex("by_merchant_updated", (range) => range.eq("merchantId", merchantId)).take(budget);
+      for (const row of workflows) { await context.db.delete(row._id); deleted += 1; }
+      budget -= workflows.length;
+    }
+
+    if (budget > 0) {
+      const reels = await context.db.query("reelPlans").withIndex("by_merchant", (range) => range.eq("merchantId", merchantId)).take(budget);
+      for (const row of reels) { await context.db.delete(row._id); deleted += 1; }
+      budget -= reels.length;
+    }
+
+    if (budget > 0) {
+      const campaigns = await context.db.query("socialCampaigns").withIndex("by_merchant", (range) => range.eq("merchantId", merchantId)).take(budget);
+      for (const row of campaigns) { await context.db.delete(row._id); deleted += 1; }
+      budget -= campaigns.length;
+    }
+
+    let unpublished = 0;
+    if (budget > 0) {
+      const sites = await context.db.query("sites").withIndex("by_merchant_slug", (range) => range.eq("merchantId", merchantId)).take(budget);
+      for (const site of sites) {
+        if (!site.productionVersionId && !site.canaryVersionId) continue;
+        await context.db.patch(site._id, { productionVersionId: undefined, canaryVersionId: undefined, updatedAt: Date.now() });
+        unpublished += 1;
+      }
+    }
+
+    return { deleted, unpublished, complete: deleted === 0 && unpublished === 0 };
+  },
+});
+
+export const completeStudioDataRequestInternal = internalMutation({
+  args: { requestId: v.string(), completedAt: v.number(), deletedRecords: v.number() },
+  handler: async (context, args) => {
+    const row = await context.db.query("studioDataRequests").withIndex("by_request_id", (range) => range.eq("requestId", args.requestId)).unique();
+    if (!row || row.status === "completed") return { updated: false };
+    await context.db.patch(row._id, { status: "completed", completedAt: args.completedAt, deletedRecords: args.deletedRecords });
+    return { updated: true };
+  },
+});
+
+export const adminPurgeMerchantContent = action({
+  args: { serviceSecret: v.string(), merchantId: v.string(), requestId: v.string() },
+  handler: async (context, args): Promise<{ deleted: number; unpublished: number; complete: boolean }> => {
+    requireServiceSecret(args.serviceSecret);
+    let deleted = 0;
+    let unpublished = 0;
+    let complete = false;
+    for (let pass = 0; pass < 25 && !complete; pass += 1) {
+      const result: { deleted: number; unpublished: number; complete: boolean } =
+        await context.runMutation(internal.growth.purgeMerchantContentInternal, { merchantId: args.merchantId, limit: 400 });
+      deleted += result.deleted;
+      unpublished += result.unpublished;
+      complete = result.complete;
+    }
+    if (complete) {
+      await context.runMutation(internal.growth.completeStudioDataRequestInternal, {
+        requestId: args.requestId, completedAt: Date.now(), deletedRecords: deleted,
+      });
+    }
+    return { deleted, unpublished, complete };
   },
 });
 
@@ -401,6 +513,46 @@ export const adminEnqueueCustomerOutbox = action({
     requireServiceSecret(args.serviceSecret);
     const { serviceSecret: _secret, ...record } = args;
     return context.runMutation(internal.growth.enqueueCustomerOutboxInternal, record);
+  },
+});
+
+/**
+ * Closes out one outbox row after the edge has attempted delivery.
+ *
+ * `customerOutbox` previously had an enqueue and no consumer, so every row stayed "pending"
+ * for ever and the message was never sent. The edge now sends inline and reports the outcome
+ * here, so a row's status reflects what actually reached the merchant.
+ */
+export const markCustomerOutboxSentInternal = internalMutation({
+  args: {
+    outboxId: v.string(),
+    status: v.union(v.literal("sent"), v.literal("failed")),
+    providerMessageId: v.optional(v.string()),
+    updatedAt: v.number(),
+  },
+  handler: async (context, args) => {
+    const row = await context.db.query("customerOutbox").withIndex("by_outbox_id", (range) => range.eq("outboxId", args.outboxId)).unique();
+    if (!row || row.status === "sent") return { updated: false };
+    await context.db.patch(row._id, {
+      status: args.status,
+      attempts: row.attempts + 1,
+      updatedAt: args.updatedAt,
+      ...(args.providerMessageId ? { providerMessageId: args.providerMessageId } : {}),
+    });
+    return { updated: true };
+  },
+});
+
+export const adminMarkCustomerOutboxSent = action({
+  args: {
+    serviceSecret: v.string(), outboxId: v.string(),
+    status: v.union(v.literal("sent"), v.literal("failed")),
+    providerMessageId: v.optional(v.string()), updatedAt: v.number(),
+  },
+  handler: async (context, args): Promise<{ updated: boolean }> => {
+    requireServiceSecret(args.serviceSecret);
+    const { serviceSecret: _secret, ...record } = args;
+    return context.runMutation(internal.growth.markCustomerOutboxSentInternal, record);
   },
 });
 
@@ -716,7 +868,7 @@ export const adminRegisterLead = action({
 });
 
 export const createApprovalInternal = internalMutation({
-  args: { approvalId: v.string(), merchantId: v.string(), type: v.union(v.literal("release"), v.literal("call_batch"), v.literal("reel"), v.literal("social_campaign")), scopeHash: v.string(), providerMessageId: v.string(), expiresAt: v.number(), createdAt: v.number() },
+  args: { approvalId: v.string(), merchantId: v.string(), type: v.union(v.literal("release"), v.literal("call_batch"), v.literal("reel"), v.literal("social_campaign")), scopeHash: v.string(), providerMessageId: v.string(), checklist: v.optional(v.string()), expiresAt: v.number(), createdAt: v.number() },
   handler: async (context, args) => {
     const merchant = await context.db.query("merchants").withIndex("by_merchant_id", (range) => range.eq("merchantId", args.merchantId)).unique();
     if (!merchant) throw new Error("merchant does not exist");
@@ -737,11 +889,41 @@ export const attachApprovalMessageInternal = internalMutation({
 });
 
 export const adminCreateApproval = action({
-  args: { serviceSecret: v.string(), approvalId: v.string(), merchantId: v.string(), type: v.union(v.literal("release"), v.literal("call_batch"), v.literal("reel"), v.literal("social_campaign")), scopeHash: v.string(), providerMessageId: v.string(), expiresAt: v.number(), createdAt: v.number() },
+  args: { serviceSecret: v.string(), approvalId: v.string(), merchantId: v.string(), type: v.union(v.literal("release"), v.literal("call_batch"), v.literal("reel"), v.literal("social_campaign")), scopeHash: v.string(), providerMessageId: v.string(), checklist: v.optional(v.string()), expiresAt: v.number(), createdAt: v.number() },
   handler: async (context, args): Promise<{ ownerWaIdHash: string }> => {
     requireServiceSecret(args.serviceSecret);
     const { serviceSecret: _secret, ...record } = args;
     return context.runMutation(internal.growth.createApprovalInternal, record);
+  },
+});
+
+/**
+ * Lists the approvals a merchant still has to decide.
+ *
+ * Only merchant-safe fields leave this query: the scope hash, owner hash, and provider message
+ * ID stay server-side. The mobile approval inbox is a client and must never see them.
+ */
+export const listMerchantApprovalsInternal = internalQuery({
+  args: { merchantId: v.string(), now: v.number() },
+  handler: async (context, { merchantId, now }) => {
+    const approvals = await context.db.query("approvals").withIndex("by_merchant", (range) => range.eq("merchantId", merchantId)).order("desc").take(50);
+    return approvals
+      .filter((approval) => approval.decision === "pending" && approval.expiresAt > now)
+      .map((approval) => ({
+        approvalId: approval.approvalId,
+        type: approval.type,
+        checklist: approval.checklist,
+        expiresAt: approval.expiresAt,
+        createdAt: approval.createdAt,
+      }));
+  },
+});
+
+export const adminListMerchantApprovals = action({
+  args: { serviceSecret: v.string(), merchantId: v.string() },
+  handler: async (context, args): Promise<Array<{ approvalId: string; type: "release" | "call_batch" | "reel" | "social_campaign"; checklist?: string; expiresAt: number; createdAt: number }>> => {
+    requireServiceSecret(args.serviceSecret);
+    return context.runQuery(internal.growth.listMerchantApprovalsInternal, { merchantId: args.merchantId, now: Date.now() });
   },
 });
 

@@ -20,6 +20,10 @@ Real non-test calling stays disabled until India/US telecom and telemarketing re
 
 ## Site analytics and media
 
-Photos remain private in R2 until their immutable IDs are selected in a published spec. Page events use a random first-party session ID hashed at ingestion. ProofGate stores no IP address. Public passports and reports use aggregate counts and redact identities. Reel outputs contain only approved supplied media and are returned privately.
+Photos remain private until their immutable IDs are selected in a published spec. They are held in private Convex File Storage; the Cloudflare R2 path exists in code but is not active. Page events use a random first-party session ID hashed at ingestion. ProofGate stores no IP address. Public passports and reports use aggregate counts and redact identities. Reel outputs contain only approved supplied media and are returned privately.
 
 Takedown removes the public site/media promptly while preserving redacted append-only release and consent evidence where legally required.
+
+## Account deletion
+
+A merchant can delete their account from Studio after typing an explicit confirmation phrase. The deletion runs immediately rather than being queued: it erases Studio projects and every revision, linked browser sessions, private media (database record and stored bytes), workflow state, and reel and campaign drafts, and it unpublishes their sites. Redacted append-only release, approval, lead-consent, call, and usage evidence is retained on the basis described above. The response reports how many records were removed.

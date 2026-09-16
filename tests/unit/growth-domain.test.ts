@@ -58,13 +58,28 @@ describe("WhatsApp growth domain", () => {
   });
 
   it("renders five complete constrained website styles from SiteSpec data", () => {
-    for (const layout of ["minimal", "editorial", "catalog", "services", "portfolio"] as const) {
+    const layouts = ["minimal", "editorial", "catalog", "services", "portfolio"] as const;
+    const rendered = new Map<string, string>();
+    for (const layout of layouts) {
       const spec = SiteSpecV2Schema.parse({ ...initialBakerySiteSpec, theme: { ...initialBakerySiteSpec.theme, layout } });
       const html = renderBusinessSite(spec, { versionId: `version-${layout}`, specHash: "a".repeat(64) });
       expect(html).toContain(`data-pg-layout="${layout}"`);
       expect(html).toContain('data-pg="catalog"');
       expect(html).toContain('data-pg="primary-cta"');
+      rendered.set(layout, html);
     }
+    // The class name alone proves nothing: each layout must carry styling that actually
+    // targets it, otherwise "five layouts" is one unstyled page wearing five different names.
+    for (const layout of layouts) {
+      const rules = rendered.get(layout)!.match(new RegExp(`\\.layout-${layout}\\b[^{]*\\{[^}]+\\}`, "g")) ?? [];
+      expect(rules.length, `layout "${layout}" has no CSS rules of its own`).toBeGreaterThan(0);
+    }
+    // Distinct grid geometry is what separates the catalog, services, and editorial styles.
+    // One stylesheet serves every layout, so the variation lives within it, not across renders.
+    const catalogColumns = new Set(
+      [...rendered.get("minimal")!.matchAll(/\.layout-[a-z]+ \.catalog\{grid-template-columns:([^;}]+)/g)].map((match) => match[1]),
+    );
+    expect(catalogColumns.size).toBeGreaterThan(1);
   });
 
   it("accepts only India and US leads with purpose-specific evidence", () => {

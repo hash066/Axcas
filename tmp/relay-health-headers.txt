@@ -1,0 +1,8 @@
+HTTP/1.1 200 OK
+Date: Thu, 13 Aug 2026 15:20:34 GMT
+Content-Type: application/json
+Content-Length: 53
+Connection: keep-alive
+cache-control: no-store
+Apigw-Requestid: CDAOZiDshcwEP7A=
+

@@ -153,22 +153,46 @@ export type ApprovalChecklistInput = {
   details: string[];
 };
 
+/**
+ * Turns a generated site identifier ("maya-studio-3f9a2b") into merchant-facing text
+ * ("Maya Studio"). The WhatsApp release path only carries the identifier, and showing it raw
+ * leaks a slug into the approval card.
+ */
+export function siteDisplayName(siteId: string): string {
+  const words = siteId.replace(/-[0-9a-f]{6}$/, "").split("-").filter(Boolean);
+  if (words.length === 0) return "Your website";
+  return words.map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
+}
+
+const reelAngleLabels: Record<string, string> = {
+  "Offer + urgency": "a short offer reel",
+  "Process + proof": "a behind-the-scenes reel",
+  "Founder + evidence": "a reel in your own words",
+  "Useful breakdown": "a quick how-it-works reel",
+  "Question + answer": "a reel answering a common question",
+};
+
+/** Merchant-facing description of an internal reel angle, with a neutral fallback. */
+export function reelAngleLabel(angle: string): string {
+  return reelAngleLabels[angle] ?? "a new reel";
+}
+
 export function formatApprovalChecklist(input: ApprovalChecklistInput): string {
   const subject = safeText.parse(input.subject).slice(0, 140);
   const details = z.array(safeText).min(1).max(8).parse(input.details);
   const heading = {
     release: "Ready to publish",
     call_batch: "Ready to call",
-    reel: "Ready to render",
+    reel: "Ready to make your reel",
     social_campaign: "Ready to schedule",
   }[input.type];
   const consequence = {
     release: "Approve publishes only this version.",
-    call_batch: "Approve starts only this consented call batch.",
-    reel: "Approve renders only this reel; it is not posted.",
+    call_batch: "Approve and I'll make only these calls.",
+    reel: "Approve and I'll make only this reel. It is not posted anywhere.",
     social_campaign: "Approve schedules only these three listed variations.",
   }[input.type];
-  const checklist = [`${heading} — ${subject}`, ...details.map((detail) => `✓ ${detail}`), "", consequence, "Nothing else will run."].join("\n");
+  const checklist = [`${heading} — ${subject}`, ...details.map((detail) => `✓ ${detail}`), "", consequence, "Nothing else happens."].join("\n");
   if (checklist.length > 1024) throw new Error("approval checklist is too long for WhatsApp");
   return checklist;
 }

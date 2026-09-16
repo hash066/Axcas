@@ -70,6 +70,11 @@ function adminBoundary(): GrowthAdminBoundary {
     beginInboundWorkflow: vi.fn(async (input) => ({ created: true, workflowId: input.workflowId, status: "received" })),
     recordWorkflowProgress: vi.fn(async (input) => ({ inserted: true, status: input.status })),
     enqueueCustomerOutbox: vi.fn(async (input) => ({ inserted: true, outboxId: input.outboxId })),
+    markCustomerOutboxSent: vi.fn(async () => ({ updated: true })),
+    purgeMerchantContent: vi.fn(async () => ({ deleted: 3, unpublished: 1, complete: true })),
+    listMerchantApprovals: vi.fn(async () => [
+      { approvalId: "approval-pending-1", type: "release" as const, checklist: "Ready to publish — Maya Studio website", expiresAt: Date.now() + 3_600_000, createdAt: Date.now() },
+    ]),
     reserveUsage: vi.fn(async () => ({ allowed: true })),
     recordActualUsage: vi.fn(async () => ({ inserted: true })),
   };
@@ -225,9 +230,13 @@ describe("growth Worker", () => {
     expect(exportedBody).toMatchObject({ schemaVersion: 1, account: { method: "whatsapp" }, projects: [expect.objectContaining({ projectId: "project-maya" })] });
     expect(JSON.stringify(exportedBody)).not.toContain("a".repeat(64));
     const deletion = await app.request("http://proofgate.test/api/studio/account/deletion", { method: "POST", headers: { "content-type": "application/json", cookie: "axcas_session=abcdefghijklmnopqrstuvwxyz1234567890" }, body: JSON.stringify({ confirmation: "DELETE MY DATA" }) });
-    expect(deletion.status).toBe(202);
-    expect(await deletion.json()).toMatchObject({ status: "requested", requestId: expect.stringMatching(/^data-request-/), dueBy: expect.any(Number) });
+    // A deletion request used to be recorded and never acted on. It must now actually delete,
+    // report what it removed, and end the session it just erased.
+    expect(deletion.status).toBe(200);
+    expect(await deletion.json()).toMatchObject({ status: "completed", requestId: expect.stringMatching(/^data-request-/), deletedRecords: 3, unpublishedSites: 1 });
     expect(admin.createStudioDataRequest).toHaveBeenCalledWith(expect.objectContaining({ merchantId: "merchant-maya", type: "deletion" }), undefined);
+    expect(admin.purgeMerchantContent).toHaveBeenCalledWith(expect.objectContaining({ merchantId: "merchant-maya" }), undefined);
+    expect(deletion.headers.get("set-cookie")).toContain("axcas_session=;");
   });
 
   it("requires an explicit phrase before recording a deletion request", async () => {
@@ -238,6 +247,31 @@ describe("growth Worker", () => {
     });
     expect(response.status).toBe(400);
     expect(admin.createStudioDataRequest).not.toHaveBeenCalled();
+  });
+
+  it("lists pending approvals for the mobile inbox without leaking internal fields", async () => {
+    const admin = adminBoundary();
+    (admin.getStudioSession as ReturnType<typeof vi.fn>).mockResolvedValue({ merchantId: "merchant-maya", ownerWaIdHash: "a".repeat(64), expiresAt: Date.now() + 10_000 });
+    const response = await createApp(undefined, boundary(), admin).request("http://proofgate.test/api/studio/approvals", {
+      headers: { cookie: "axcas_session=abcdefghijklmnopqrstuvwxyz1234567890" },
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json() as { approvals: Array<Record<string, unknown>> };
+    expect(body.approvals[0]).toMatchObject({ approvalId: "approval-pending-1", type: "release" });
+    expect(body.approvals[0].checklist).toContain("Ready to publish");
+    // The scope hash, owner hash, and provider message ID stay server-side.
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toContain("scopeHash");
+    expect(serialized).not.toContain("ownerWaIdHash");
+    expect(serialized).not.toContain("a".repeat(64));
+    expect(admin.listMerchantApprovals).toHaveBeenCalledWith("merchant-maya", undefined);
+  });
+
+  it("refuses to list approvals without a Studio session", async () => {
+    const admin = adminBoundary();
+    const response = await createApp(undefined, boundary(), admin).request("http://proofgate.test/api/studio/approvals");
+    expect(response.status).toBe(401);
+    expect(admin.listMerchantApprovals).not.toHaveBeenCalled();
   });
 
   it("keeps the three channel choices inside the desktop viewport", async () => {

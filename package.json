@@ -30,7 +30,7 @@
     "test:hermes-plugin": "python tests/hermes_plugin_test.py",
     "test:aws-media": "python tests/aws_merchant_media_lambda_test.py",
     "test": "npm run test:legacy && npm run test:unit && npm run test:hermes-plugin && npm run test:aws-media",
-    "typecheck": "tsc --noEmit && npm run typecheck --workspace=@axcas/reel-template-worker"
+    "typecheck": "tsc --noEmit && npm run typecheck --workspace=@axcas/reel-template-worker && npm run typecheck --workspace=@axcas/mobile"
   },
   "dependencies": {
     "@aws-sdk/client-polly": "^3.1104.0",
