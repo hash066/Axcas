@@ -8,7 +8,7 @@ $ErrorActionPreference = 'Stop'
 $workspace = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $template = Join-Path $PSScriptRoot 'template.yaml'
 
-foreach ($commandName in @('aws', 'docker', 'git', 'npm', 'uvx')) {
+foreach ($commandName in @('aws', 'docker', 'git', 'npm')) {
   if (-not (Get-Command $commandName -ErrorAction SilentlyContinue)) { throw "$commandName is required" }
 }
 
@@ -22,8 +22,8 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'TypeScript verification failed' }
   npm test
   if ($LASTEXITCODE -ne 0) { throw 'Test verification failed' }
-  uvx cfn-lint $template
-  if ($LASTEXITCODE -ne 0) { throw 'CloudFormation validation failed' }
+  aws cloudformation validate-template --template-body "file://$template" --region $Region *> $null
+  if ($LASTEXITCODE -ne 0) { throw 'AWS CloudFormation validation failed' }
 } finally {
   Pop-Location
 }

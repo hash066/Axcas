@@ -53,6 +53,7 @@ describe("AWS-native production architecture", () => {
     expect(deploy).toContain("git -C $workspace status --porcelain");
     expect(deploy).toContain("npm run typecheck");
     expect(deploy).toContain("npm test");
+    expect(deploy).toContain("aws cloudformation validate-template");
     expect(workflow).toContain("npm ci");
     expect(workflow).toContain("pipx run cfn-lint infra/aws-native/template.yaml");
   });
