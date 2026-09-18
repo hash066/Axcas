@@ -167,3 +167,4 @@ export function studioApprovalView(input: unknown): StudioApprovalView {
 }
 
 export const StudioProjectIdSchema = identifier.and(slug);
+export const StudioProjectChangesCursorSchema = z.string().regex(/^\d{1,16}:[a-z0-9][a-z0-9-]{2,63}:\d{1,10}$/).max(128);

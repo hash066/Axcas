@@ -4,6 +4,7 @@ import { extractProofGateApproval, verifyMetaWebhookSignature } from "../../../p
 import {
   StudioApiError,
   StudioApprovalCreateRequestSchema,
+  StudioProjectChangesCursorSchema,
   StudioProjectIdSchema,
   StudioProjectPatchRequestSchema,
   type StudioApprovalView,
@@ -30,6 +31,7 @@ export type AwsControlPlaneDependencies = {
   signMediaPart?: (input: { authSubject: string; assetId: string; request: unknown }) => Promise<Record<string, unknown>>;
   completeMediaUpload?: (input: { authSubject: string; assetId: string; request: unknown }) => Promise<Record<string, unknown>>;
   getStudioAccount?: (input: { authSubject: string }) => Promise<Record<string, unknown>>;
+  listStudioProjectChanges?: (input: { authSubject: string; cursor?: string }) => Promise<{ changes: StudioProjectRevision[]; cursor?: string }>;
   getStudioProject?: (input: { authSubject: string; projectId: string }) => Promise<StudioProjectRevision>;
   patchStudioProject?: (input: { authSubject: string; projectId: string; request: unknown }) => Promise<StudioProjectRevision>;
   listStudioApprovals?: (input: { authSubject: string }) => Promise<{ approvals: StudioApprovalView[] }>;
@@ -80,6 +82,15 @@ export function createAwsControlPlaneApp(dependencies: AwsControlPlaneDependenci
     const authSubject = authenticatedSubject(context.req.header("x-axcas-auth-sub"));
     if (!dependencies.getStudioAccount) return context.json({ error: "temporarily_unavailable" }, 503, { "cache-control": "no-store" });
     return context.json(await dependencies.getStudioAccount({ authSubject }), 200, { "cache-control": "no-store" });
+  });
+
+  app.get("/api/studio/projects/changes", async (context) => {
+    const authSubject = authenticatedSubject(context.req.header("x-axcas-auth-sub"));
+    const rawCursor = context.req.query("cursor");
+    const cursor = rawCursor === undefined ? undefined : StudioProjectChangesCursorSchema.safeParse(rawCursor);
+    if (cursor && !cursor.success) throw new StudioApiError("invalid_request", 400);
+    if (!dependencies.listStudioProjectChanges) return context.json({ error: "temporarily_unavailable" }, 503, { "cache-control": "no-store" });
+    return context.json(await dependencies.listStudioProjectChanges({ authSubject, ...(cursor ? { cursor: cursor.data } : {}) }), 200, { "cache-control": "no-store" });
   });
 
   app.get("/api/studio/projects/:projectId", async (context) => {

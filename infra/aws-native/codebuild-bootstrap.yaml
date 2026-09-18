@@ -11,7 +11,8 @@ Resources:
   CloudFormationServiceRole:
     Type: AWS::IAM::Role
     # AWS's live CloudFormation handler now requests the granular API Gateway
-    # TagResource/UntagResource actions; cfn-lint 1.57.0 still uses the older
+    # TagResource/UntagResource actions against the HTTP API stage collection
+    # ARN (ending in /stages); cfn-lint 1.57.0 still uses the older
     # HTTP-verb-only API Gateway action catalog.
     Metadata:
       cfn-lint:
@@ -244,7 +245,7 @@ Resources:
                 Action:
                   - apigateway:TagResource
                   - apigateway:UntagResource
-                Resource: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}::/apis/*/stages/*
+                Resource: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}::/apis/*/stages
               - Sid: AxcasKmsServiceUse
                 Effect: Allow
                 Action:

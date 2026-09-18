@@ -42,6 +42,12 @@ describe("AWS Amplify Studio frontend", () => {
     expect(files["index.html"].indexOf("axcas-config.js")).toBeLessThan(files["index.html"].indexOf("studio.js"));
     expect(files["studio.css"]).toContain(".builder-shell");
     expect(files["studio.js"]).toContain("__AXCAS_STUDIO_AUTH__");
+    expect(files["studio.js"]).toContain("PATCH");
+    expect(files["studio.js"]).toContain("/api/studio/projects/changes");
+    expect(files["studio.js"]).toContain("Save website changes");
+    expect(files["studio.css"]).toContain("#newProjectButton");
+    expect(files["studio.css"]).toContain("#manageAccessButton");
+    expect(files["studio.css"]).toContain("#manageDataButton");
     expect(Object.values(files).join("\n")).not.toContain("META_APP_SECRET");
     expect(Object.values(files).join("\n")).not.toContain("WHATSAPP_CLOUD_ACCESS_TOKEN");
   });
@@ -76,7 +82,7 @@ describe("AWS Amplify Studio frontend", () => {
           ? { ok: true, json: async () => ({ ChallengeName: "CUSTOM_CHALLENGE", Session: "challenge-session" }) }
           : { ok: true, json: async () => ({ AuthenticationResult: { IdToken: idToken } }) };
       }
-      return { ok: true, status: 200, json: async () => ({ account: { displayName: "Maya Studio" }, projects: [] }) };
+      return { ok: true, status: 200, json: async () => ({ account: { merchantId: "merchant-maya", locale: "en-IN", timezone: "Asia/Kolkata", plan: "free_beta" }, projects: [] }) };
     };
     Object.defineProperty(window, "fetch", { value: fetch });
 
@@ -99,6 +105,66 @@ describe("AWS Amplify Studio frontend", () => {
     expect(apiCall).toBeDefined();
     expect(new Headers(apiCall!.options?.headers).get("authorization")).toBe(`Bearer ${idToken}`);
     expect(calls.filter((call) => call.url.includes("cognito-idp"))).toHaveLength(2);
+    expect(window.document.querySelector("#newProjectButton")!.classList.contains("hidden")).toBe(true);
+    expect(window.document.querySelector("#manageAccessButton")!.classList.contains("hidden")).toBe(true);
+    expect(window.document.querySelector("#manageDataButton")!.classList.contains("hidden")).toBe(true);
+    expect(window.document.querySelector<HTMLButtonElement>('#projectForm button[type="submit"]')!.textContent).toBe("Save website changes");
+  });
+
+  it("hydrates the canonical AWS project and saves only a revision-bound SiteSpec patch", async () => {
+    const files = renderAwsStudioBundle(config);
+    const dom = new JSDOM(files["index.html"], { runScripts: "outside-only", url: "https://beta.example.amplifyapp.com/" });
+    const window = (dom as { window: Window & typeof globalThis }).window;
+    Object.defineProperty(window.HTMLElement.prototype, "scrollIntoView", { value: () => undefined });
+    Object.defineProperty(window.URL, "createObjectURL", { value: () => "blob:https://beta.example/media" });
+    Object.defineProperty(window.URL, "revokeObjectURL", { value: () => undefined });
+    Object.defineProperty(window, "Headers", { value: Headers });
+    const idToken = `header.${Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 900 })).toString("base64url")}.signature`;
+    const project = {
+      schemaVersion: 1, projectId: "maya-studio", merchantId: "merchant-maya", revision: 3, specHash: "a".repeat(64), updatedAt: 1_800_000_000_000, updatedBy: "whatsapp",
+      spec: {
+        schemaVersion: 3, siteId: "maya-studio", merchantId: "merchant-maya", businessType: "tailor", layoutPreset: "editorial", sectionOrder: ["hero", "offerings", "proof", "contact"],
+        theme: { accent: "#c54f34", surface: "#fffaf4", text: "#201915", headingFont: "serif", bodyFont: "sans" },
+        business: { name: "Maya Studio", description: "Custom blouse stitching", timezone: "Asia/Kolkata", locale: "en-IN" },
+        hero: { headline: "Maya Studio", subheadline: "Custom blouse stitching", assetId: "asset-maya-hero" },
+        offerings: [{ itemId: "custom-blouse", name: "Custom blouse", description: "Made to measure", price: { currency: "INR", amountMinor: 150000 }, availability: "available" }],
+        proof: [], contact: { orderWhatsAppNumber: "+919180499647", fulfillmentArea: "Bengaluru", leadTime: "3-5 days", ctaLabel: "Message us" }, seo: { title: "Maya Studio", description: "Custom blouse stitching" }, publishedAssetIds: ["asset-maya-hero"],
+      },
+    };
+    const calls: Array<{ url: string; options?: RequestInit }> = [];
+    const fetch = async (input: string | URL | Request, options?: RequestInit) => {
+      const url = String(input); calls.push({ url, options });
+      if (url.endsWith("/api/studio/me")) return { ok: true, status: 200, json: async () => ({ account: { merchantId: "merchant-maya", locale: "en-IN", timezone: "Asia/Kolkata", plan: "free_beta" }, projects: [project] }) };
+      if (url.includes("/api/studio/projects/changes")) return { ok: true, status: 200, json: async () => ({ changes: [], cursor: "1800000000000:maya-studio:3" }) };
+      if (url.endsWith("/api/studio/projects/maya-studio") && options?.method === "PATCH") {
+        const patchCount = calls.filter((call) => call.options?.method === "PATCH").length;
+        return patchCount === 1
+          ? { ok: true, status: 200, json: async () => ({ ...project, revision: 4, updatedAt: 1_800_000_100_000, updatedBy: "studio" }) }
+          : { ok: false, status: 409, json: async () => ({ error: "revision_conflict" }) };
+      }
+      throw new Error(`unexpected request ${url}`);
+    };
+    Object.defineProperty(window, "fetch", { value: fetch });
+    window.eval(files["axcas-config.js"]);
+    window.eval(files["aws-studio.js"]);
+    window.sessionStorage.setItem(`axcas-studio-session:${config.cognitoClientId}`, JSON.stringify({ IdToken: idToken }));
+    window.eval(files["studio.js"]);
+    await viWaitFor(() => (window.document.querySelector<HTMLInputElement>('[name="businessName"]')?.value ?? "") === "Maya Studio");
+    window.document.querySelector<HTMLInputElement>('[name="businessName"]')!.value = "Maya Atelier";
+    window.document.querySelector<HTMLFormElement>("#projectForm")!.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
+    await viWaitFor(() => calls.some((call) => call.options?.method === "PATCH"));
+    const patchCall = calls.find((call) => call.options?.method === "PATCH")!;
+    expect(patchCall.url.endsWith("/api/studio/projects/maya-studio")).toBe(true);
+    expect(JSON.parse(String(patchCall.options?.body))).toMatchObject({ expectedRevision: 3, patch: { business: { name: "Maya Atelier" } } });
+    expect(calls.some((call) => call.options?.method === "POST" && call.url.includes("/api/studio/projects"))).toBe(false);
+    await viWaitFor(() => window.document.querySelector("#saveStatus")!.textContent?.startsWith("Saved.") === true);
+
+    const businessName = window.document.querySelector<HTMLInputElement>('[name="businessName"]')!;
+    businessName.value = "My unsaved local edit";
+    businessName.dispatchEvent(new window.Event("input", { bubbles: true }));
+    window.document.querySelector<HTMLFormElement>("#projectForm")!.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
+    await viWaitFor(() => !window.document.querySelector("#conflictPanel")!.classList.contains("hidden"));
+    expect(businessName.value).toBe("My unsaved local edit");
   });
 
   it("ships the static artifact through Amplify's immutable manual-deployment job", () => {

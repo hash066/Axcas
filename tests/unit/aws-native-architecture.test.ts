@@ -53,6 +53,14 @@ describe("AWS-native production architecture", () => {
     expect(userPool).not.toContain("UserAttributeUpdateSettings:");
   });
 
+  it("protects the Studio continuity feed with the same Cognito JWT authorizer", () => {
+    const template = readFileSync(templatePath, "utf8");
+    const route = cloudFormationResource(template, "StudioProjectChangesRoute");
+    expect(route).toContain("RouteKey: 'GET /api/studio/projects/changes'");
+    expect(route).toContain("AuthorizationType: JWT");
+    expect(route).toContain("AuthorizerId: !Ref StudioApiAuthorizer");
+  });
+
   it("packages three immutable runtimes and isolates finite orchestration work", () => {
     const template = readFileSync(templatePath, "utf8");
     expect(readFileSync(controlPlaneDockerfile, "utf8")).toContain("public.ecr.aws/lambda/nodejs:22");

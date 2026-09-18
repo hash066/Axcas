@@ -764,6 +764,14 @@ Resources:
       Target: !Sub 'integrations/${PublicApiIntegration}'
       AuthorizationType: JWT
       AuthorizerId: !Ref StudioApiAuthorizer
+  StudioProjectChangesRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref PublicApi
+      RouteKey: 'GET /api/studio/projects/changes'
+      Target: !Sub 'integrations/${PublicApiIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref StudioApiAuthorizer
   StudioProjectPatchRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:

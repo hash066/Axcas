@@ -104,6 +104,29 @@ describe("AWS Studio HTTP API", () => {
     expect(patchStudioProject).toHaveBeenCalledWith({ authSubject: "cognito-sub-123", projectId: "maya-studio", request: goodBody });
   });
 
+  it("returns authenticated project changes from an opaque revision cursor", async () => {
+    const listStudioProjectChanges = vi.fn(async () => ({ changes: [await project()], cursor: "1800000000000:maya-studio:3" }));
+    const app = createAwsControlPlaneApp({ ...base, listStudioProjectChanges });
+    expect((await app.request("/api/studio/projects/changes?cursor=1800000000000%3Amaya-studio%3A2")).status).toBe(401);
+    const response = await app.request("/api/studio/projects/changes?cursor=1800000000000%3Amaya-studio%3A2", { headers: { "x-axcas-auth-sub": "cognito-sub-123" } });
+    expect(response.status).toBe(200);
+    expect(listStudioProjectChanges).toHaveBeenCalledWith({ authSubject: "cognito-sub-123", cursor: "1800000000000:maya-studio:2" });
+    expect(await response.json()).toMatchObject({ cursor: "1800000000000:maya-studio:3", changes: [{ projectId: "maya-studio", revision: 3 }] });
+    expect((await app.request("/api/studio/projects/changes?cursor=not-a-cursor", { headers: { "x-axcas-auth-sub": "cognito-sub-123" } })).status).toBe(400);
+  });
+
+  it("surfaces revision conflicts without replacing the customer's draft", async () => {
+    const patchStudioProject = vi.fn(async () => { throw new (await import("../../apps/aws-control-plane/src/studio-api")).StudioApiError("revision_conflict", 409); });
+    const app = createAwsControlPlaneApp({ ...base, patchStudioProject });
+    const response = await app.request("/api/studio/projects/maya-studio", {
+      method: "PATCH",
+      headers: { "x-axcas-auth-sub": "cognito-sub-123", "content-type": "application/json" },
+      body: JSON.stringify({ expectedRevision: 2, patch: { hero: { headline: "My unsaved headline" } } }),
+    });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "revision_conflict" });
+  });
+
   it("lists and creates only pending hash-bound approvals for the authenticated tenant", async () => {
     const listStudioApprovals = vi.fn(async () => ({ approvals: [] }));
     const createStudioApproval = vi.fn(async () => ({ approvalId: "approval-maya-v3", type: "release" as const, projectId: "maya-studio", revision: 3, scopeHash: "a".repeat(64), expiresAt: 1_800_086_400_000, decision: "pending" as const, createdAt: 1_800_000_000_000 }));

@@ -263,6 +263,25 @@ async function dependencies(): Promise<AwsControlPlaneDependencies> {
         projects,
       };
     },
+    listStudioProjectChanges: async ({ authSubject, cursor }) => {
+      const { merchantId } = await identityForSubject(authSubject);
+      const result = await dynamo.send(new QueryCommand({
+        TableName: tableName,
+        KeyConditionExpression: "pk = :tenant AND begins_with(sk, :project)",
+        FilterExpression: "entityType = :current",
+        ExpressionAttributeValues: { ":tenant": `TENANT#${merchantId}`, ":project": "PROJECT#", ":current": "studio_project_current" },
+        ConsistentRead: true,
+      }));
+      const projects = (result.Items ?? []).map(projectFromItem);
+      const key = (project: StudioProjectRevision) => `${String(project.updatedAt).padStart(16, "0")}:${project.projectId}:${String(project.revision).padStart(10, "0")}`;
+      const normalizedCursor = cursor ? (() => {
+        const [updatedAt, projectId, revision] = cursor.split(":");
+        return `${String(updatedAt).padStart(16, "0")}:${projectId}:${String(revision).padStart(10, "0")}`;
+      })() : undefined;
+      const changes = projects.filter((project) => !normalizedCursor || key(project) > normalizedCursor).sort((left, right) => key(left).localeCompare(key(right)));
+      const latest = changes.at(-1) ?? projects.sort((left, right) => key(left).localeCompare(key(right))).at(-1);
+      return { changes, ...(latest ? { cursor: `${latest.updatedAt}:${latest.projectId}:${latest.revision}` } : {}) };
+    },
     getStudioProject: async ({ authSubject, projectId }) => {
       const { merchantId } = await identityForSubject(authSubject);
       return projectForMerchant(merchantId, projectId);

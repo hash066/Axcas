@@ -39,7 +39,7 @@ export function renderAwsStudioBundle(input: unknown): AwsStudioBundle {
   );
   return {
     "index.html": html,
-    "studio.css": `${renderStudioCss()}\n.aws-sign-in{display:grid;gap:16px;max-width:460px;margin:24px 0}.aws-sign-in label{display:grid;gap:8px}.aws-sign-in input{width:100%}`,
+    "studio.css": `${renderStudioCss()}\n.aws-sign-in{display:grid;gap:16px;max-width:460px;margin:24px 0}.aws-sign-in label{display:grid;gap:8px}.aws-sign-in input{width:100%}\n/* AWS beta exposes only implemented continuity controls; unsupported actions remain absent instead of failing after a click. */\n#newProjectButton.hidden,#manageAccessButton.hidden,#manageDataButton.hidden,#newProjectPanel.hidden,#sessionPanel.hidden,#dataPanel.hidden{display:none!important}`,
     "studio.js": renderStudioClientJs(),
     "aws-studio.js": renderAwsStudioAuthJs(),
     "axcas-config.js": renderConfigJs(config),
