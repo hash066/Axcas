@@ -19,6 +19,11 @@ Parameters:
     Type: String
     Default: '919180499647'
     AllowedPattern: '^91[6-9][0-9]{9}$'
+  StudioBranchName:
+    Type: String
+    Default: beta
+    AllowedPattern: '^[a-z0-9][a-z0-9-]{0,254}$'
+    Description: Exact Amplify branch whose origin may call the browser-facing Studio API and private upload endpoints.
   OperatorAlertEmail:
     Type: String
     Default: ''
@@ -37,7 +42,7 @@ Conditions:
 Resources:
   DataKey:
     Type: AWS::KMS::Key
-    DeletionPolicy: Retain
+    DeletionPolicy: RetainExceptOnCreate
     UpdateReplacePolicy: Retain
     Properties:
       Description: Axcas tenant data, media, evidence, and provider-token encryption
@@ -58,6 +63,14 @@ Resources:
              Condition:
                StringEquals: { 'AWS:SourceAccount': !Ref 'AWS::AccountId' }
                StringLike: { 'AWS:SourceArn': !Sub 'arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/*' }
+           - Sid: CloudWatchAlarmNotifications
+             Effect: Allow
+             Principal: { Service: cloudwatch.amazonaws.com }
+             Action: ['kms:Decrypt', 'kms:GenerateDataKey*']
+             Resource: '*'
+             Condition:
+               StringEquals: { 'AWS:SourceAccount': !Ref 'AWS::AccountId' }
+               StringLike: { 'AWS:SourceArn': !Sub 'arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:axcas-${EnvironmentName}-*' }
 
   DataKeyAlias:
     Type: AWS::KMS::Alias
@@ -67,7 +80,7 @@ Resources:
 
   StateTable:
     Type: AWS::DynamoDB::Table
-    DeletionPolicy: Retain
+    DeletionPolicy: RetainExceptOnCreate
     UpdateReplacePolicy: Retain
     Properties:
       BillingMode: PAY_PER_REQUEST
@@ -92,7 +105,7 @@ Resources:
 
   LedgerTable:
     Type: AWS::DynamoDB::Table
-    DeletionPolicy: Retain
+    DeletionPolicy: RetainExceptOnCreate
     UpdateReplacePolicy: Retain
     Properties:
       BillingMode: PAY_PER_REQUEST
@@ -108,7 +121,7 @@ Resources:
 
   AssetsBucket:
     Type: AWS::S3::Bucket
-    DeletionPolicy: Retain
+    DeletionPolicy: RetainExceptOnCreate
     UpdateReplacePolicy: Retain
     Properties:
       BucketEncryption:
@@ -136,7 +149,7 @@ Resources:
 
   SitesBucket:
     Type: AWS::S3::Bucket
-    DeletionPolicy: Retain
+    DeletionPolicy: RetainExceptOnCreate
     UpdateReplacePolicy: Retain
     Properties:
       BucketEncryption:
@@ -148,7 +161,7 @@ Resources:
 
   EvidenceBucket:
     Type: AWS::S3::Bucket
-    DeletionPolicy: Retain
+    DeletionPolicy: RetainExceptOnCreate
     UpdateReplacePolicy: Retain
     Properties:
       BucketEncryption:
@@ -221,7 +234,7 @@ Resources:
 
   ProviderSecrets:
     Type: AWS::SecretsManager::Secret
-    DeletionPolicy: Retain
+    DeletionPolicy: RetainExceptOnCreate
     UpdateReplacePolicy: Retain
     Properties:
       Name: !Sub axcas/${EnvironmentName}/providers
@@ -236,7 +249,7 @@ Resources:
   UserPool:
     Type: AWS::Cognito::UserPool
     DependsOn: AuthChallengeInvokePermission
-    DeletionPolicy: Retain
+    DeletionPolicy: RetainExceptOnCreate
     UpdateReplacePolicy: Retain
     Properties:
       UserPoolName: !Sub axcas-${EnvironmentName}
@@ -280,7 +293,7 @@ Resources:
     Type: AWS::Amplify::Branch
     Properties:
       AppId: !GetAtt StudioApp.AppId
-      BranchName: beta
+      BranchName: !Ref StudioBranchName
       EnableAutoBuild: false
       Stage: BETA
 
@@ -321,8 +334,17 @@ Resources:
           EnableAcceptEncodingBrotli: false
           EnableAcceptEncodingGzip: false
           HeadersConfig: { HeaderBehavior: none }
-          CookiesConfig: { CookieBehavior: whitelist, Cookies: [pgsid] }
-          QueryStringsConfig: { QueryStringBehavior: whitelist, QueryStrings: [source, campaign] }
+          CookiesConfig: { CookieBehavior: none }
+          QueryStringsConfig: { QueryStringBehavior: none }
+
+  DynamicRouteOriginRequestPolicy:
+    Type: AWS::CloudFront::OriginRequestPolicy
+    Properties:
+      OriginRequestPolicyConfig:
+        Name: !Sub axcas-${EnvironmentName}-dynamic-origin
+        HeadersConfig: { HeaderBehavior: none }
+        CookiesConfig: { CookieBehavior: whitelist, Cookies: [pgsid] }
+        QueryStringsConfig: { QueryStringBehavior: whitelist, QueryStrings: [source, campaign] }
 
   SiteSecurityHeaders:
     Type: AWS::CloudFront::ResponseHeadersPolicy
@@ -376,6 +398,7 @@ Resources:
             AllowedMethods: [GET, HEAD, OPTIONS]
             CachedMethods: [GET, HEAD, OPTIONS]
             CachePolicyId: !Ref DynamicRouteCachePolicy
+            OriginRequestPolicyId: !Ref DynamicRouteOriginRequestPolicy
           - PathPattern: 'e/*'
             TargetOriginId: api
             ViewerProtocolPolicy: redirect-to-https
@@ -383,6 +406,7 @@ Resources:
             AllowedMethods: [GET, HEAD, OPTIONS]
             CachedMethods: [GET, HEAD, OPTIONS]
             CachePolicyId: !Ref DynamicRouteCachePolicy
+            OriginRequestPolicyId: !Ref DynamicRouteOriginRequestPolicy
         CustomErrorResponses:
           - { ErrorCode: 403, ResponseCode: 404, ResponsePagePath: /404.html, ErrorCachingMinTTL: 30 }
 
@@ -467,7 +491,7 @@ Resources:
 
   WorkerLogGroup:
     Type: AWS::Logs::LogGroup
-    DeletionPolicy: Retain
+    DeletionPolicy: RetainExceptOnCreate
     UpdateReplacePolicy: Retain
     Properties: { LogGroupName: !Sub '/axcas/${EnvironmentName}/workers', RetentionInDays: 30 }
 
@@ -485,7 +509,7 @@ Resources:
         - Name: hermes
           Image: !Ref HermesImageUri
           Essential: true
-          Command: [hermes, --gateway]
+          Command: [hermes, gateway, run]
           Environment:
             - { Name: WHATSAPP_CLOUD_ALLOW_ALL_USERS, Value: 'true' }
             - { Name: WHATSAPP_CLOUD_WEBHOOK_HOST, Value: '127.0.0.1' }
@@ -603,8 +627,25 @@ Resources:
               - { Effect: Allow, Action: ['secretsmanager:GetSecretValue'], Resource: !Ref ProviderSecrets }
               - { Effect: Allow, Action: ['s3:AbortMultipartUpload', 's3:PutObject', 's3:GetObject'], Resource: !Sub '${AssetsBucket.Arn}/*' }
 
+  CognitoProvisioningPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub axcas-${EnvironmentName}-signed-whatsapp-provisioning
+      Roles: [!Ref ControlPlaneRole]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - cognito-idp:AdminCreateUser
+              - cognito-idp:AdminGetUser
+              - cognito-idp:AdminSetUserPassword
+              - cognito-idp:AdminUpdateUserAttributes
+            Resource: !GetAtt UserPool.Arn
+
   ControlPlaneFunction:
     Type: AWS::Lambda::Function
+    DependsOn: CognitoProvisioningPolicy
     Properties:
       PackageType: Image
       Code: { ImageUri: !Ref ControlPlaneImageUri }
@@ -619,6 +660,7 @@ Resources:
           AXCAS_INGRESS_QUEUE_URL: !Ref IngressQueue
           AXCAS_MEDIA_VERIFICATION_QUEUE_URL: !Ref MediaVerificationQueue
           AXCAS_WHATSAPP_NUMBER: !Ref WhatsAppNumber
+          AXCAS_COGNITO_USER_POOL_ID: !Ref UserPool
           AXCAS_PROVIDER_SECRET_ARN: !Ref ProviderSecrets
           AXCAS_ASSETS_BUCKET: !Ref AssetsBucket
           AXCAS_DATA_KEY_ID: !Ref DataKey
@@ -679,7 +721,14 @@ Resources:
 
   PublicApi:
     Type: AWS::ApiGatewayV2::Api
-    Properties: { Name: !Sub 'axcas-${EnvironmentName}', ProtocolType: HTTP }
+    Properties:
+      Name: !Sub 'axcas-${EnvironmentName}'
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins: [!Sub 'https://${StudioBranchName}.${StudioApp.DefaultDomain}']
+        AllowMethods: [GET, POST, PATCH, OPTIONS]
+        AllowHeaders: [Authorization, Content-Type]
+        MaxAge: 600
   PublicApiIntegration:
     Type: AWS::ApiGatewayV2::Integration
     Properties: { ApiId: !Ref PublicApi, IntegrationType: AWS_PROXY, IntegrationUri: !GetAtt ControlPlaneFunction.Arn, PayloadFormatVersion: '2.0', TimeoutInMillis: 15000 }
@@ -693,6 +742,53 @@ Resources:
       JwtConfiguration:
         Audience: [!Ref StudioClient]
         Issuer: !Sub 'https://cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${UserPool}'
+  StudioPreflightRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref PublicApi
+      RouteKey: 'OPTIONS /{proxy+}'
+      Target: !Sub 'integrations/${PublicApiIntegration}'
+      AuthorizationType: NONE
+  StudioAccountRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref PublicApi
+      RouteKey: 'GET /api/studio/me'
+      Target: !Sub 'integrations/${PublicApiIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref StudioApiAuthorizer
+  StudioProjectReadRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref PublicApi
+      RouteKey: 'GET /api/studio/projects/{projectId}'
+      Target: !Sub 'integrations/${PublicApiIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref StudioApiAuthorizer
+  StudioProjectPatchRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref PublicApi
+      RouteKey: 'PATCH /api/studio/projects/{projectId}'
+      Target: !Sub 'integrations/${PublicApiIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref StudioApiAuthorizer
+  StudioApprovalsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref PublicApi
+      RouteKey: 'GET /api/studio/approvals'
+      Target: !Sub 'integrations/${PublicApiIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref StudioApiAuthorizer
+  StudioProjectApprovalRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref PublicApi
+      RouteKey: 'POST /api/studio/projects/{projectId}/approvals'
+      Target: !Sub 'integrations/${PublicApiIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref StudioApiAuthorizer
   MetaOAuthStartRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
@@ -755,6 +851,7 @@ Resources:
           VisibilityConfig: { CloudWatchMetricsEnabled: true, MetricName: rate, SampledRequestsEnabled: true }
   ApiWebAclAssociation:
     Type: AWS::WAFv2::WebACLAssociation
+    DependsOn: PublicApiStage
     Properties: { ResourceArn: !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}::/apis/${PublicApi}/stages/$default', WebACLArn: !GetAtt ApiWebAcl.Arn }
 
   WorkflowRole:
@@ -767,6 +864,9 @@ Resources:
             Version: '2012-10-17'
             Statement:
               - { Effect: Allow, Action: ['ecs:RunTask', 'ecs:StopTask', 'ecs:DescribeTasks'], Resource: '*' }
+              - { Effect: Allow, Action: ['events:DescribeRule', 'events:PutRule', 'events:PutTargets'], Resource: !Sub 'arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:rule/StepFunctionsGetEventsForECSTaskRule' }
+              - { Effect: Allow, Action: ['sqs:SendMessage'], Resource: !GetAtt CampaignQueue.Arn }
+              - { Effect: Allow, Action: ['kms:Decrypt', 'kms:GenerateDataKey'], Resource: !GetAtt DataKey.Arn }
               - { Effect: Allow, Action: ['iam:PassRole'], Resource: [!GetAtt WorkerTaskRole.Arn, !GetAtt TaskExecutionRole.Arn] }
               - { Effect: Allow, Action: ['sns:Publish'], Resource: !Ref OperationsTopic }
 
@@ -842,6 +942,8 @@ Resources:
 Outputs:
   PublicApiUrl: { Value: !GetAtt PublicApi.ApiEndpoint }
   StudioDefaultDomain: { Value: !GetAtt StudioApp.DefaultDomain }
+  StudioUrl: { Value: !Sub 'https://${StudioBranchName}.${StudioApp.DefaultDomain}' }
+  StudioBranchNameOutput: { Value: !Ref StudioBranchName }
   SitesDomain: { Value: !GetAtt SitesDistribution.DomainName }
   UserPoolId: { Value: !Ref UserPool }
   StudioClientId: { Value: !Ref StudioClient }

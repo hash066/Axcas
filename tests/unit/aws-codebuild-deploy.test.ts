@@ -27,6 +27,51 @@ describe("AWS-native CodeBuild deployment bootstrap", () => {
     expect(template).not.toContain("PowerUserAccess");
   });
 
+  it("allows CloudFormation to manage the dynamic route origin request policy", () => {
+    const template = readFileSync(bootstrapTemplate, "utf8");
+    for (const action of [
+      "cloudfront:CreateOriginRequestPolicy",
+      "cloudfront:DeleteOriginRequestPolicy",
+      "cloudfront:GetOriginRequestPolicy",
+      "cloudfront:UpdateOriginRequestPolicy",
+    ]) expect(template).toContain(action);
+  });
+
+  it("allows CloudFormation to empty campaign schedules before deleting their group", () => {
+    const template = readFileSync(bootstrapTemplate, "utf8");
+    for (const action of [
+      "scheduler:DeleteSchedule",
+      "scheduler:GetSchedule",
+      "scheduler:ListSchedules",
+    ]) expect(template).toContain(action);
+  });
+
+  it("allows only the AWS-native stack services to initialize encrypted resources", () => {
+    const template = readFileSync(bootstrapTemplate, "utf8");
+    for (const action of [
+      "ecr:BatchGetImage",
+      "ecr:GetDownloadUrlForLayer",
+      "kms:CreateGrant",
+      "kms:Decrypt",
+      "kms:DescribeKey",
+      "kms:Encrypt",
+      "kms:GenerateDataKey*",
+      "kms:ReEncrypt*",
+      "s3:GetBucketCORS",
+      "s3:GetBucketLocation",
+      "s3:GetBucketObjectLockConfiguration",
+      "s3:GetBucketPublicAccessBlock",
+      "s3:ListBucket",
+      "s3:PutBucketCORS",
+      "s3:PutBucketObjectLockConfiguration",
+    ]) expect(template).toContain(action);
+    expect(template).toContain("Sid: AxcasKmsServiceUse");
+    expect(template).toContain("kms:ViaService");
+    expect(template).toContain("dynamodb.${AWS::Region}.${AWS::URLSuffix}");
+    expect(template).toContain("secretsmanager.${AWS::Region}.${AWS::URLSuffix}");
+    expect(template).toContain("kms:GrantIsForAWSResource");
+  });
+
   it("checks the exact immutable commit in both the launcher and build", () => {
     const buildspec = readFileSync(buildspecPath, "utf8");
     const bootstrap = readFileSync(bootstrapScript, "utf8");

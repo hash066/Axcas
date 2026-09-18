@@ -24,4 +24,4 @@ COPY infra/aws-native/hermes-config.yaml /var/lib/hermes/config.yaml
 RUN chown -R hermes:hermes /var/lib/hermes /run/axcas
 USER hermes
 WORKDIR /var/lib/hermes
-CMD ["hermes", "--gateway"]
+CMD ["hermes", "gateway", "run"]

@@ -1,5 +1,6 @@
 import { createHmac, randomUUID } from "node:crypto";
 
+import { AdminCreateUserCommand, AdminGetUserCommand, AdminSetUserPasswordCommand, AdminUpdateUserAttributesCommand, CognitoIdentityProviderClient } from "@aws-sdk/client-cognito-identity-provider";
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
 import { EncryptCommand, KMSClient } from "@aws-sdk/client-kms";
 import { AbortMultipartUploadCommand, CompleteMultipartUploadCommand, CreateMultipartUploadCommand, HeadObjectCommand, S3Client, UploadPartCommand } from "@aws-sdk/client-s3";
@@ -10,6 +11,7 @@ import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, TransactW
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 
 import { createAwsControlPlaneApp, type AwsControlPlaneDependencies } from "./app";
+import { provisionCognitoMerchant } from "./cognito-provisioning";
 import { buildMetaBusinessLoginUrl, createMetaOAuthState, discoverMetaBusinessAssets, exchangeMetaAuthorizationCode, verifyMetaOAuthState } from "../../../packages/social/src/meta-oauth";
 import { CompleteUploadRequestSchema, UploadPartRequestSchema, initiateTenantUpload } from "./media-upload";
 import {
@@ -34,6 +36,7 @@ type ApiGatewayEvent = {
 type ApiGatewayResponse = { statusCode: number; headers: Record<string, string>; body: string; isBase64Encoded: false };
 
 const secrets = new SecretsManagerClient({});
+const cognito = new CognitoIdentityProviderClient({});
 const sqs = new SQSClient({});
 const sfn = new SFNClient({});
 const kms = new KMSClient({});
@@ -70,7 +73,8 @@ async function dependencies(): Promise<AwsControlPlaneDependencies> {
   const tableName = process.env.AXCAS_STATE_TABLE;
   const ledgerTable = process.env.AXCAS_LEDGER_TABLE;
   const assetsBucket = process.env.AXCAS_ASSETS_BUCKET;
-  if (!queueUrl || !tableName || !ledgerTable || !config.META_APP_SECRET || !config.META_VERIFY_TOKEN || !config.PROOFGATE_SERVICE_SECRET) throw new Error("control plane is not configured");
+  const userPoolId = process.env.AXCAS_COGNITO_USER_POOL_ID;
+  if (!queueUrl || !tableName || !ledgerTable || !userPoolId || !config.META_APP_SECRET || !config.META_VERIFY_TOKEN || !config.PROOFGATE_SERVICE_SECRET) throw new Error("control plane is not configured");
   const currentSite = async (siteId: string) => {
     const response = await dynamo.send(new GetCommand({ TableName: tableName, Key: { pk: `SITE#${siteId}`, sk: "CURRENT" }, ConsistentRead: true }));
     const item = response.Item as { merchantId?: string; versionId?: string; specHash?: string; businessName?: string; orderWhatsAppNumber?: string; offerings?: Array<{ itemId?: string; name?: string }> } | undefined;
@@ -154,6 +158,77 @@ async function dependencies(): Promise<AwsControlPlaneDependencies> {
   return {
     metaAppSecret: config.META_APP_SECRET,
     metaVerifyToken: config.META_VERIFY_TOKEN,
+    provisionStudioUser: async (input) => provisionCognitoMerchant(input, {
+      hashSecret: config.PROOFGATE_SERVICE_SECRET,
+      createUser: async ({ phoneNumber }) => {
+        const temporaryPassword = `Axcas!${randomUUID()}9aA`;
+        await cognito.send(new AdminCreateUserCommand({
+          UserPoolId: userPoolId,
+          Username: phoneNumber,
+          TemporaryPassword: temporaryPassword,
+          MessageAction: "SUPPRESS",
+          UserAttributes: [
+            { Name: "phone_number", Value: phoneNumber },
+            { Name: "phone_number_verified", Value: "true" },
+          ],
+        }));
+      },
+      getUser: async ({ phoneNumber }) => {
+        const response = await cognito.send(new AdminGetUserCommand({ UserPoolId: userPoolId, Username: phoneNumber }));
+        return {
+          username: response.Username ?? "",
+          status: response.UserStatus,
+          attributes: Object.fromEntries((response.UserAttributes ?? []).flatMap((attribute) => attribute.Name && attribute.Value ? [[attribute.Name, attribute.Value]] : [])),
+        };
+      },
+      updateUserAttributes: async ({ username, phoneNumber, confirmForCustomAuth }) => {
+        await cognito.send(new AdminUpdateUserAttributesCommand({
+          UserPoolId: userPoolId,
+          Username: username,
+          UserAttributes: [
+            { Name: "phone_number", Value: phoneNumber },
+            { Name: "phone_number_verified", Value: "true" },
+          ],
+        }));
+        if (confirmForCustomAuth) {
+          // CUSTOM_AUTH must not strand a first-time user in NEW_PASSWORD_REQUIRED.
+          // This unknown generated value is never returned, logged, or requested.
+          await cognito.send(new AdminSetUserPasswordCommand({
+            UserPoolId: userPoolId,
+            Username: username,
+            Password: `Axcas!${randomUUID()}9aA`,
+            Permanent: true,
+          }));
+        }
+      },
+      bindIdentity: async (binding) => {
+        const receiptHash = identityHash(binding.providerMessageId, config.PROOFGATE_SERVICE_SECRET);
+        await dynamo.send(new TransactWriteCommand({ TransactItems: [
+          { Update: {
+            TableName: tableName,
+            Key: { pk: `IDENTITY#${binding.authSubject}`, sk: "PROFILE" },
+            UpdateExpression: "SET merchantId = if_not_exists(merchantId, :merchant), ownerWaIdHash = if_not_exists(ownerWaIdHash, :owner), verifiedAt = if_not_exists(verifiedAt, :verified), lastVerifiedAt = :verified, lastProviderReceiptHash = :receipt",
+            ConditionExpression: "attribute_not_exists(pk) OR (merchantId = :merchant AND ownerWaIdHash = :owner)",
+            ExpressionAttributeValues: { ":merchant": binding.merchantId, ":owner": binding.ownerWaIdHash, ":verified": binding.verifiedAt, ":receipt": receiptHash },
+          } },
+          { Update: {
+            TableName: tableName,
+            Key: { pk: `WA#${binding.ownerWaIdHash}`, sk: "PROFILE" },
+            UpdateExpression: "SET merchantId = if_not_exists(merchantId, :merchant), ownerWaIdHash = if_not_exists(ownerWaIdHash, :owner), cognitoSubject = if_not_exists(cognitoSubject, :subject), verifiedAt = if_not_exists(verifiedAt, :verified), lastVerifiedAt = :verified",
+            ConditionExpression: "attribute_not_exists(pk) OR (merchantId = :merchant AND ownerWaIdHash = :owner AND (attribute_not_exists(cognitoSubject) OR cognitoSubject = :subject))",
+            ExpressionAttributeValues: { ":merchant": binding.merchantId, ":owner": binding.ownerWaIdHash, ":subject": binding.authSubject, ":verified": binding.verifiedAt },
+          } },
+          { Update: {
+            TableName: tableName,
+            Key: { pk: `TENANT#${binding.merchantId}`, sk: "ACCOUNT" },
+            UpdateExpression: "SET schemaVersion = if_not_exists(schemaVersion, :version), merchantId = if_not_exists(merchantId, :merchant), ownerWaIdHash = if_not_exists(ownerWaIdHash, :owner), #plan = if_not_exists(#plan, :plan), locale = if_not_exists(locale, :locale), timezone = if_not_exists(timezone, :timezone), updatedAt = :verified",
+            ConditionExpression: "attribute_not_exists(pk) OR (merchantId = :merchant AND ownerWaIdHash = :owner)",
+            ExpressionAttributeNames: { "#plan": "plan" },
+            ExpressionAttributeValues: { ":version": 1, ":merchant": binding.merchantId, ":owner": binding.ownerWaIdHash, ":plan": "free_beta", ":locale": "en-IN", ":timezone": "Asia/Kolkata", ":verified": binding.verifiedAt },
+          } },
+        ] }));
+      },
+    }),
     recordPageView: async (input) => {
       const result = await recordSiteEvent({ type: "page_view", ...input });
       return { setCookie: result.setCookie };

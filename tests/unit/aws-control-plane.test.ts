@@ -18,32 +18,54 @@ describe("AWS-native control-plane ingress", () => {
 
   it("rejects invalid signatures before parsing or queueing", async () => {
     const enqueue = vi.fn();
-    const app = createAwsControlPlaneApp({ metaAppSecret: "app-secret", metaVerifyToken: "verify-secret", enqueue, resolveApproval: vi.fn() });
+    const provisionStudioUser = vi.fn();
+    const app = createAwsControlPlaneApp({ metaAppSecret: "app-secret", metaVerifyToken: "verify-secret", enqueue, resolveApproval: vi.fn(), provisionStudioUser });
     const response = await app.request("https://api.example/whatsapp/webhook", { method: "POST", headers: { "content-type": "application/json", "x-hub-signature-256": "sha256=bad" }, body: JSON.stringify(ordinaryPayload) });
     expect(response.status).toBe(401);
     expect(enqueue).not.toHaveBeenCalled();
+    expect(provisionStudioUser).not.toHaveBeenCalled();
   });
 
   it("queues the unchanged raw body for an ordinary merchant message", async () => {
     const enqueue = vi.fn(async () => ({ messageId: "sqs-1" }));
+    const provisionStudioUser = vi.fn(async () => ({ authSubject: "subject-1", merchantId: "merchant-1" }));
     const body = JSON.stringify(ordinaryPayload);
-    const app = createAwsControlPlaneApp({ metaAppSecret: "app-secret", metaVerifyToken: "verify-secret", enqueue, resolveApproval: vi.fn() });
+    const app = createAwsControlPlaneApp({ metaAppSecret: "app-secret", metaVerifyToken: "verify-secret", enqueue, resolveApproval: vi.fn(), provisionStudioUser });
     const response = await app.request("https://api.example/whatsapp/webhook", { method: "POST", headers: { "content-type": "application/json", "x-hub-signature-256": await metaSignatureForTest(body, "app-secret") }, body });
     expect(response.status).toBe(200);
     expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({ rawBody: body, senderWaId: "919999888877", providerMessageId: "wamid.ordinary", metaSignature: await metaSignatureForTest(body, "app-secret") }));
+    expect(provisionStudioUser).toHaveBeenCalledWith({ senderWaId: "919999888877", providerMessageId: "wamid.ordinary", receivedAt: expect.any(Number) });
     expect(await response.json()).toEqual({ accepted: true });
   });
 
   it("intercepts an authenticated campaign approval instead of forwarding it to an agent", async () => {
     const enqueue = vi.fn();
     const resolveApproval = vi.fn(async () => ({ accepted: true }));
+    const provisionStudioUser = vi.fn(async () => ({ authSubject: "subject-1", merchantId: "merchant-1" }));
     const payload = { object: "whatsapp_business_account", entry: [{ changes: [{ value: { messages: [{ from: "919999888877", id: "wamid.approval", type: "interactive", interactive: { type: "button_reply", button_reply: { id: "pg:approval-maya-launch:approve" } } }] } }] }] };
     const body = JSON.stringify(payload);
-    const app = createAwsControlPlaneApp({ metaAppSecret: "app-secret", metaVerifyToken: "verify-secret", enqueue, resolveApproval });
+    const app = createAwsControlPlaneApp({ metaAppSecret: "app-secret", metaVerifyToken: "verify-secret", enqueue, resolveApproval, provisionStudioUser });
     const response = await app.request("https://api.example/whatsapp/webhook", { method: "POST", headers: { "content-type": "application/json", "x-hub-signature-256": await metaSignatureForTest(body, "app-secret") }, body });
     expect(response.status).toBe(200);
     expect(resolveApproval).toHaveBeenCalledWith({ approvalId: "approval-maya-launch", decision: "approved", senderWaId: "919999888877", providerMessageId: "wamid.approval" });
+    expect(provisionStudioUser).not.toHaveBeenCalled();
     expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it("durably queues signed intake before a retryable Cognito provisioning failure", async () => {
+    const calls: string[] = [];
+    const enqueue = vi.fn(async () => { calls.push("enqueue"); return { messageId: "sqs-1" }; });
+    const provisionStudioUser = vi.fn(async () => { calls.push("provision"); throw new Error("AdminCreateUser provider detail"); });
+    const body = JSON.stringify(ordinaryPayload);
+    const app = createAwsControlPlaneApp({ metaAppSecret: "app-secret", metaVerifyToken: "verify-secret", enqueue, resolveApproval: vi.fn(), provisionStudioUser });
+
+    const response = await app.request("https://api.example/whatsapp/webhook", { method: "POST", headers: { "content-type": "application/json", "x-hub-signature-256": await metaSignatureForTest(body, "app-secret") }, body });
+
+    expect(calls).toEqual(["enqueue", "provision"]);
+    expect(response.status).toBe(503);
+    const responseBody = await response.text();
+    expect(JSON.parse(responseBody)).toEqual({ accepted: false, error: "temporary_failure" });
+    expect(responseBody).not.toContain("AdminCreateUser");
   });
 
   it("starts authenticated Meta OAuth and completes through the signed callback", async () => {

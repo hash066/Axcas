@@ -44,11 +44,13 @@ Resources:
                   - cloudfront:CreateDistribution
                   - cloudfront:CreateFunction
                   - cloudfront:CreateOriginAccessControl
+                  - cloudfront:CreateOriginRequestPolicy
                   - cloudfront:CreateResponseHeadersPolicy
                   - cloudfront:DeleteCachePolicy
                   - cloudfront:DeleteDistribution
                   - cloudfront:DeleteFunction
                   - cloudfront:DeleteOriginAccessControl
+                  - cloudfront:DeleteOriginRequestPolicy
                   - cloudfront:DeleteResponseHeadersPolicy
                   - cloudfront:DescribeFunction
                   - cloudfront:GetCachePolicy
@@ -56,6 +58,7 @@ Resources:
                   - cloudfront:GetDistributionConfig
                   - cloudfront:GetFunction
                   - cloudfront:GetOriginAccessControl
+                  - cloudfront:GetOriginRequestPolicy
                   - cloudfront:GetResponseHeadersPolicy
                   - cloudfront:ListTagsForResource
                   - cloudfront:PublishFunction
@@ -65,6 +68,7 @@ Resources:
                   - cloudfront:UpdateDistribution
                   - cloudfront:UpdateFunction
                   - cloudfront:UpdateOriginAccessControl
+                  - cloudfront:UpdateOriginRequestPolicy
                   - cloudfront:UpdateResponseHeadersPolicy
                   - cloudwatch:DeleteAlarms
                   - cloudwatch:DescribeAlarms
@@ -164,20 +168,30 @@ Resources:
                   - s3:CreateBucket
                   - s3:DeleteBucket
                   - s3:DeleteBucketPolicy
+                  - s3:GetBucketCORS
+                  - s3:GetBucketLocation
+                  - s3:GetBucketObjectLockConfiguration
                   - s3:GetBucketPolicy
+                  - s3:GetBucketPublicAccessBlock
                   - s3:GetBucketTagging
                   - s3:GetBucketVersioning
                   - s3:GetEncryptionConfiguration
                   - s3:GetLifecycleConfiguration
+                  - s3:ListBucket
                   - s3:PutEncryptionConfiguration
+                  - s3:PutBucketCORS
                   - s3:PutLifecycleConfiguration
+                  - s3:PutBucketObjectLockConfiguration
                   - s3:PutBucketPolicy
                   - s3:PutBucketPublicAccessBlock
                   - s3:PutBucketTagging
                   - s3:PutBucketVersioning
                   - scheduler:CreateScheduleGroup
+                  - scheduler:DeleteSchedule
                   - scheduler:DeleteScheduleGroup
+                  - scheduler:GetSchedule
                   - scheduler:GetScheduleGroup
+                  - scheduler:ListSchedules
                   - scheduler:ListTagsForResource
                   - scheduler:TagResource
                   - secretsmanager:CreateSecret
@@ -217,6 +231,27 @@ Resources:
                   - wafv2:TagResource
                   - wafv2:UpdateWebACL
                 Resource: '*'
+              - Sid: AxcasKmsServiceUse
+                Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:DescribeKey
+                  - kms:Encrypt
+                  - kms:GenerateDataKey*
+                  - kms:ReEncrypt*
+                Resource: !Sub arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/*
+                Condition:
+                  StringEquals:
+                    kms:ViaService:
+                      - !Sub dynamodb.${AWS::Region}.${AWS::URLSuffix}
+                      - !Sub secretsmanager.${AWS::Region}.${AWS::URLSuffix}
+              - Sid: AxcasKmsServiceGrants
+                Effect: Allow
+                Action: kms:CreateGrant
+                Resource: !Sub arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/*
+                Condition:
+                  Bool: { 'kms:GrantIsForAWSResource': true }
+                  StringEquals: { 'kms:ViaService': !Sub 'dynamodb.${AWS::Region}.${AWS::URLSuffix}' }
               - Sid: AxcasIamRoles
                 Effect: Allow
                 Action:
@@ -235,6 +270,8 @@ Resources:
               - Sid: AxcasContainerRepositories
                 Effect: Allow
                 Action:
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
                   - ecr:GetRepositoryPolicy
                   - ecr:SetRepositoryPolicy
                 Resource: !Sub arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/axcas-${EnvironmentName}-*

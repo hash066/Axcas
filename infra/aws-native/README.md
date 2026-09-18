@@ -56,7 +56,7 @@ Preserve the generated `PROOFGATE_SERVICE_SECRET` during the replacement. Custom
 Deploy the Studio artifact after the stack finishes:
 
 ```powershell
-./apps/aws-studio/deploy.ps1 -StackName axcas-beta -Region ap-south-1
+./apps/aws-studio/deploy.ps1 -StackName axcas-beta-native -Region ap-south-1
 ```
 
 This reads the public API and Cognito outputs, creates a static bundle from the code-owned Studio renderer, and uploads it through an Amplify manual-deployment job. It does not read provider secrets. See `apps/aws-studio/README.md` for the current API-parity boundary.

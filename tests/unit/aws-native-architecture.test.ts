@@ -8,6 +8,16 @@ const hermesDockerfile = new URL("../../infra/aws-native/Dockerfile.hermes", imp
 const deployScript = new URL("../../infra/aws-native/deploy.ps1", import.meta.url);
 const productionGate = new URL("../../.github/workflows/production-gate.yml", import.meta.url);
 
+function cloudFormationResource(template: string, logicalId: string): string {
+  const normalized = template.replace(/\r\n/g, "\n");
+  const marker = `  ${logicalId}:\n`;
+  const start = normalized.indexOf(marker);
+  if (start < 0) return "";
+  const remainder = normalized.slice(start + marker.length);
+  const nextResource = remainder.search(/\n  [A-Za-z][A-Za-z0-9]*:\n    Type:/);
+  return nextResource < 0 ? normalized.slice(start) : normalized.slice(start, start + marker.length + nextResource);
+}
+
 describe("AWS-native production architecture", () => {
   it("contains the production control plane and has no single EC2 host", () => {
     const template = readFileSync(templatePath, "utf8");
@@ -29,7 +39,8 @@ describe("AWS-native production architecture", () => {
     expect(template).toContain("SSEAlgorithm: aws:kms");
     expect(template).toContain("Sid: CloudFrontSiteDecryption");
     expect(template).toContain("'kms:Decrypt'");
-    expect(template).toContain("DeletionPolicy: Retain");
+    expect(template).toContain("DeletionPolicy: RetainExceptOnCreate");
+    expect(template).not.toMatch(/DeletionPolicy: Retain\r?\n/);
   });
 
   it("packages three immutable runtimes and isolates finite orchestration work", () => {
@@ -42,6 +53,9 @@ describe("AWS-native production architecture", () => {
     expect(hermes).toContain('test "$(git -C /opt/hermes rev-parse HEAD)" = "${HERMES_GIT_REF}"');
     expect(hermes).toContain('org.opencontainers.image.version="0.18.2"');
     expect(hermes).toContain("hermes/plugins/axcas");
+    expect(hermes).toContain('CMD ["hermes", "gateway", "run"]');
+    expect(template).toContain("Command: [hermes, gateway, run]");
+    expect(template).not.toContain("Command: [hermes, --gateway]");
     expect(template).toContain("OrchestrationTask:");
     expect(template).toContain("SitePathRewrite:");
     expect(template).toContain("SiteSecurityHeaders:");
@@ -62,5 +76,61 @@ describe("AWS-native production architecture", () => {
     expect(workflow).toContain("npm ci");
     expect(workflow).toContain("pipx run cfn-lint infra/aws-native/template.yaml");
     expect(workflow).toContain("pipx run cfn-lint infra/aws-native/codebuild-bootstrap.yaml");
+  });
+
+  it("keeps disabled dynamic caching separate from forwarded tracking inputs", () => {
+    const template = readFileSync(templatePath, "utf8");
+    const cachePolicy = cloudFormationResource(template, "DynamicRouteCachePolicy");
+    const originRequestPolicy = cloudFormationResource(template, "DynamicRouteOriginRequestPolicy");
+
+    expect(cachePolicy).toContain("DefaultTTL: 0");
+    expect(cachePolicy).toContain("MaxTTL: 0");
+    expect(cachePolicy).toContain("MinTTL: 0");
+    expect(cachePolicy).toContain("CookiesConfig: { CookieBehavior: none }");
+    expect(cachePolicy).toContain("QueryStringsConfig: { QueryStringBehavior: none }");
+    expect(cachePolicy).not.toContain("CookieBehavior: whitelist");
+    expect(cachePolicy).not.toContain("QueryStringBehavior: whitelist");
+
+    expect(originRequestPolicy).toContain("Type: AWS::CloudFront::OriginRequestPolicy");
+    expect(originRequestPolicy).toContain("CookiesConfig: { CookieBehavior: whitelist, Cookies: [pgsid] }");
+    expect(originRequestPolicy).toContain("QueryStringsConfig: { QueryStringBehavior: whitelist, QueryStrings: [source, campaign] }");
+
+    const dynamicBehaviors = template.match(/PathPattern: '[re]\/\*'[\s\S]*?(?=\n\s+- PathPattern:|\n\s+CustomErrorResponses:)/g) ?? [];
+    expect(dynamicBehaviors).toHaveLength(2);
+    for (const behavior of dynamicBehaviors) {
+      expect(behavior).toContain("CachePolicyId: !Ref DynamicRouteCachePolicy");
+      expect(behavior).toContain("OriginRequestPolicyId: !Ref DynamicRouteOriginRequestPolicy");
+    }
+  });
+
+  it("orders the API WAF stage and authorizes every workflow integration", () => {
+    const template = readFileSync(templatePath, "utf8");
+    const webAclAssociation = cloudFormationResource(template, "ApiWebAclAssociation");
+    const workflowRole = cloudFormationResource(template, "WorkflowRole");
+    const dataKey = cloudFormationResource(template, "DataKey");
+    const cognitoPolicy = cloudFormationResource(template, "CognitoProvisioningPolicy");
+
+    expect(webAclAssociation).toContain("DependsOn: PublicApiStage");
+    for (const action of [
+      "events:DescribeRule",
+      "events:PutRule",
+      "events:PutTargets",
+      "kms:Decrypt",
+      "kms:GenerateDataKey",
+      "sqs:SendMessage",
+    ]) expect(workflowRole).toContain(action);
+    expect(dataKey).toContain("Sid: CloudWatchAlarmNotifications");
+    expect(dataKey).toContain("Principal: { Service: cloudwatch.amazonaws.com }");
+    expect(dataKey).toContain("'AWS:SourceAccount': !Ref 'AWS::AccountId'");
+    expect(dataKey).toContain("alarm:axcas-${EnvironmentName}-*");
+    for (const action of [
+      "cognito-idp:AdminCreateUser",
+      "cognito-idp:AdminGetUser",
+      "cognito-idp:AdminSetUserPassword",
+      "cognito-idp:AdminUpdateUserAttributes",
+    ]) expect(cognitoPolicy).toContain(action);
+    expect(cognitoPolicy).toContain("Roles: [!Ref ControlPlaneRole]");
+    expect(cognitoPolicy).toContain("Resource: !GetAtt UserPool.Arn");
+    expect(cloudFormationResource(template, "ControlPlaneFunction")).toContain("DependsOn: CognitoProvisioningPolicy");
   });
 });

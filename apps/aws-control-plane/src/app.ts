@@ -22,6 +22,7 @@ export type AwsControlPlaneDependencies = {
   metaAppSecret: string;
   metaVerifyToken: string;
   enqueue: (message: IngressMessage) => Promise<{ messageId?: string }>;
+  provisionStudioUser?: (input: { senderWaId: string; providerMessageId: string; receivedAt: number }) => Promise<{ authSubject: string; merchantId: string }>;
   resolveApproval: (tap: { approvalId: string; decision: "approved" | "denied"; senderWaId: string; providerMessageId: string }) => Promise<{ accepted: boolean }>;
   startMetaOAuth?: (input: { authSubject: string; returnPath: string }) => Promise<{ authorizationUrl: string }>;
   completeMetaOAuth?: (input: { code: string; state: string }) => Promise<{ returnPath: string }>;
@@ -214,7 +215,13 @@ export function createAwsControlPlaneApp(dependencies: AwsControlPlaneDependenci
       return context.json({ accepted: true }, 200, { "cache-control": "no-store" });
     }
     const message = firstWhatsAppMessage(payload);
-    if (message) await dependencies.enqueue({ ...message, rawBody, metaSignature, receivedAt: (dependencies.now ?? Date.now)() });
+    const receivedAt = (dependencies.now ?? Date.now)();
+    if (message) {
+      // Preserve the Meta-signed receipt durably before optional identity work.
+      // A Cognito outage can then return a retryable response without losing intake.
+      await dependencies.enqueue({ ...message, rawBody, metaSignature, receivedAt });
+      if (dependencies.provisionStudioUser) await dependencies.provisionStudioUser({ ...message, receivedAt });
+    }
     // Meta delivery/status callbacks are acknowledged without entering the merchant-agent queue.
     return context.json({ accepted: true }, 200, { "cache-control": "no-store" });
   });

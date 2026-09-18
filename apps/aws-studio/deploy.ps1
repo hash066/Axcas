@@ -1,7 +1,7 @@
 param(
   [string]$EnvironmentName = "beta",
   [string]$Region = "ap-south-1",
-  [string]$StackName = "axcas-beta",
+  [string]$StackName = "axcas-beta-native",
   [string]$BranchName = "beta"
 )
 
@@ -22,6 +22,11 @@ try {
   $env:AXCAS_COGNITO_USER_POOL_ID = Get-StackOutput "UserPoolId"
   $env:AXCAS_COGNITO_CLIENT_ID = Get-StackOutput "StudioClientId"
   $env:AXCAS_WHATSAPP_NUMBER = "919180499647"
+  $studioUrl = Get-StackOutput "StudioUrl"
+  $configuredBranchName = Get-StackOutput "StudioBranchNameOutput"
+  if ($BranchName -ne $configuredBranchName) {
+    throw "Branch '$BranchName' is not the stack-configured Studio branch '$configuredBranchName'. Update the reviewed stack before changing the browser origin."
+  }
 
   Push-Location $workspace
   try { npx tsx apps/aws-studio/src/build-cli.ts $buildDirectory }
@@ -38,7 +43,7 @@ try {
 
   Invoke-WebRequest -Uri $deployment.zipUploadUrl -Method Put -InFile $archivePath -ContentType "application/zip" | Out-Null
   aws amplify start-deployment --app-id $appId.Trim() --branch-name $BranchName --job-id $deployment.jobId --region $Region | Out-Null
-  Write-Host "Axcas Studio deployment started: https://$BranchName.$appId.amplifyapp.com"
+  Write-Host "Axcas Studio deployment started: $studioUrl"
 }
 finally {
   if (Test-Path -LiteralPath $archivePath) { Remove-Item -LiteralPath $archivePath -Force }
