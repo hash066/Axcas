@@ -254,7 +254,6 @@ Resources:
     Properties:
       UserPoolName: !Sub axcas-${EnvironmentName}
       UsernameAttributes: [phone_number]
-      AutoVerifiedAttributes: [phone_number]
       LambdaConfig:
         DefineAuthChallenge: !GetAtt AuthChallengeFunction.Arn
         CreateAuthChallenge: !GetAtt AuthChallengeFunction.Arn
@@ -263,7 +262,6 @@ Resources:
       Policies:
         PasswordPolicy: { MinimumLength: 20, RequireLowercase: true, RequireNumbers: true, RequireSymbols: true, RequireUppercase: true, TemporaryPasswordValidityDays: 1 }
       UserPoolAddOns: { AdvancedSecurityMode: ENFORCED }
-      UserAttributeUpdateSettings: { AttributesRequireVerificationBeforeUpdate: [phone_number] }
 
   StudioClient:
     Type: AWS::Cognito::UserPoolClient
