@@ -39,6 +39,10 @@ describe("AWS-native CodeBuild deployment bootstrap", () => {
     expect(buildspec).toContain('test "$(git rev-parse HEAD)" = "$SOURCE_REVISION"');
     expect(buildspec).toContain("imageDigest");
     expect(buildspec).toContain("build_if_missing");
+    expect(buildspec).toContain('local repository="$1"');
+    expect(buildspec).toContain('local image="$REGISTRY/$repository:$SOURCE_REVISION"');
+    expect(buildspec).not.toContain('local repository="$1" dockerfile="$2" image=');
+    expect(buildspec).toContain("set -euo pipefail\n        build_if_missing()");
     expect(buildspec).toContain('describe-images --repository-name "$repository" --image-ids imageTag="$SOURCE_REVISION"');
     expect(buildspec).toContain("@$CONTROL_DIGEST");
     expect(buildspec).toContain("@$WORKER_DIGEST");

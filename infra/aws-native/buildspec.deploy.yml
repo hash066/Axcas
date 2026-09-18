@@ -46,8 +46,11 @@ phases:
       - export WORKER_REPOSITORY="axcas-$ENVIRONMENT_NAME-worker"
       - export HERMES_REPOSITORY="axcas-$ENVIRONMENT_NAME-hermes"
       - |
+        set -euo pipefail
         build_if_missing() {
-          local repository="$1" dockerfile="$2" image="$REGISTRY/$repository:$SOURCE_REVISION"
+          local repository="$1"
+          local dockerfile="$2"
+          local image="$REGISTRY/$repository:$SOURCE_REVISION"
           if aws ecr describe-images --repository-name "$repository" --image-ids imageTag="$SOURCE_REVISION" >/dev/null 2>&1; then
             echo "Reusing immutable image for $repository at the exact source revision."
             return
