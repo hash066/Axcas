@@ -18,8 +18,6 @@ if ($dirty) { throw 'Refusing to deploy an uncommitted worktree; commit and pass
 
 Push-Location $workspace
 try {
-  docker run --rm --volume "${workspace}:/work" --workdir /work mcr.microsoft.com/playwright:v1.57.0-noble bash -lc "npm ci && npm run typecheck && npm test"
-  if ($LASTEXITCODE -ne 0) { throw 'Containerized production verification failed' }
   aws cloudformation validate-template --template-body "file://$template" --region $Region *> $null
   if ($LASTEXITCODE -ne 0) { throw 'AWS CloudFormation validation failed' }
 } finally {
@@ -31,6 +29,10 @@ if ($LASTEXITCODE -ne 0 -or $accountId -notmatch '^\d{12}$') { throw 'AWS identi
 $registry = "$accountId.dkr.ecr.$Region.amazonaws.com"
 $sourceRevision = (git -C $workspace rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or $sourceRevision -notmatch '^[a-f0-9]{40}$') { throw 'Git revision lookup failed' }
+$checkHeaders = @{ Accept = 'application/vnd.github+json'; 'User-Agent' = 'axcas-production-deployer' }
+$checks = (Invoke-RestMethod -Headers $checkHeaders -Uri "https://api.github.com/repos/hash066/Axcas/commits/$sourceRevision/check-runs").check_runs
+$verified = $checks | Where-Object { $_.name -eq 'verify' -and $_.head_sha -eq $sourceRevision -and $_.status -eq 'completed' -and $_.conclusion -eq 'success' -and $_.app.slug -eq 'github-actions' }
+if (-not $verified) { throw 'The exact commit does not have a successful GitHub production gate' }
 
 $repositories = [ordered]@{
   control = "axcas-$EnvironmentName-control-plane"
@@ -65,6 +67,8 @@ foreach ($name in $images.Keys) {
   $digest = (aws ecr describe-images --repository-name $entry.Repository --image-ids imageTag=$sourceRevision --query 'imageDetails[0].imageDigest' --output text --region $Region).Trim()
   if ($digest -notmatch '^sha256:[a-f0-9]{64}$') { throw "$name image digest lookup failed" }
   $imageUris[$name] = "$registry/$($entry.Repository)@$digest"
+  docker image rm $taggedUri *> $null
+  if ($LASTEXITCODE -ne 0) { throw "$name local image cleanup failed" }
 }
 
 $parameters = @(

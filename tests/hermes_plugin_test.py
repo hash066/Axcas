@@ -22,7 +22,7 @@ class MerchantOutputGuardTests(unittest.TestCase):
         self.plugin = load_plugin()
 
     def assert_blocked(self, value):
-        self.assertEqual(self.plugin.filter_customer_output(value, "whatsapp_cloud"), self.plugin.SAFE_RETRY_MESSAGE)
+        self.assertEqual(self.plugin.filter_customer_output(value, "whatsapp_cloud"), "")
 
     def test_blocks_shell_approval_with_env_names_and_path(self):
         self.assert_blocked(
@@ -42,6 +42,18 @@ class MerchantOutputGuardTests(unittest.TestCase):
     def test_blocks_provider_diagnostics(self):
         self.assert_blocked("Provider authentication failed. Raw provider details are in the gateway logs.")
 
+    def test_blocks_every_internal_vendor_and_workflow_identifier(self):
+        for message in (
+            "Cloudflare deployment failed",
+            "Convex returned an error",
+            "Hermes candidate verification is pending",
+            "Bedrock and Strands created SiteSpecV3",
+            "merchantId=merchant-private workflowId=workflow-private",
+            "Use pg:approval-private:approve",
+        ):
+            with self.subTest(message=message):
+                self.assert_blocked(message)
+
     def test_blocks_customer_facing_setup_and_approval_language(self):
         self.assert_blocked("Please approve this shell command so I can configure the backend credentials.")
         self.assert_blocked("The database connection is missing. Ask your operator to set up the server.")
@@ -56,6 +68,16 @@ class MerchantOutputGuardTests(unittest.TestCase):
 
     def test_empty_whatsapp_output_stays_silent(self):
         self.assertEqual(self.plugin.filter_customer_output("", "whatsapp_cloud"), "")
+
+    def test_transform_hook_recovers_whatsapp_platform_from_session(self):
+        gateway = types.ModuleType("gateway")
+        session_context = types.ModuleType("gateway.session_context")
+        session_context.get_session_env = lambda name, default="": "whatsapp_cloud" if name.endswith("PLATFORM") else default
+        with mock.patch.dict(sys.modules, {
+            "gateway": gateway,
+            "gateway.session_context": session_context,
+        }):
+            self.assertEqual(self.plugin._filter_llm_output("Cloudflare failed"), "")
 
     def test_runtime_hook_blocks_generic_host_tools_on_whatsapp(self):
         gateway = types.ModuleType("gateway")
@@ -82,6 +104,22 @@ class MerchantOutputGuardTests(unittest.TestCase):
              mock.patch.object(self.plugin, "_session_context", return_value={"platform": "whatsapp_cloud", "userId": "919876543210", "messageId": "wamid.1"}):
             result = json.loads(self.plugin._call_bridge("intake", {}))
         self.assertEqual(result, allowed)
+
+    def test_bridge_scrubs_unsafe_customer_message_before_model_sees_it(self):
+        raw = json.dumps({
+            "status": "temporarily_unavailable",
+            "customerMessage": "PROOFGATE_SERVICE_SECRET=not-for-a-customer",
+            "notifyCustomer": True,
+        }).encode("utf-8")
+        response = mock.Mock(status=200)
+        response.read.return_value = raw
+        connection = mock.Mock()
+        connection.getresponse.return_value = response
+        with mock.patch.object(self.plugin, "_UnixHTTPConnection", return_value=connection), \
+             mock.patch.object(self.plugin, "_session_context", return_value={"platform": "whatsapp_cloud", "userId": "919876543210", "messageId": "wamid.2"}):
+            result = json.loads(self.plugin._call_bridge("intake", {}))
+        self.assertEqual(result["customerMessage"], self.plugin.SAFE_RETRY_MESSAGE)
+        self.assertNotIn("PROOFGATE", json.dumps(result))
 
 
 if __name__ == "__main__":

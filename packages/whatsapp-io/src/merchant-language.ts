@@ -17,7 +17,7 @@ export type MerchantLanguageRule = { readonly name: string; readonly pattern: Re
 
 export const MERCHANT_LANGUAGE_RULES: readonly MerchantLanguageRule[] = [
   { name: "code_fence", pattern: /```/ },
-  { name: "vendor_or_infrastructure", pattern: /\b(?:ProofGate|Convex|Cloudflare|Hermes|Vapi|Bedrock|Strands)\b/i },
+  { name: "vendor_or_infrastructure", pattern: /\b(?:ProofGate|Convex|Cloudflare|Hermes|Vapi|Bedrock|Strands|Meta|AWS|Lambda|S3|DynamoDB|SQS|Fargate|CloudFront|Cognito|API Gateway|WAF|Polly|FFmpeg|backend|provider)\b/i },
   { name: "pipeline_vocabulary", pattern: /\b(?:candidate|capabilit(?:y|ies)|verifier|verification|intake|rollback)\b/i },
   { name: "policy_status", pattern: /\bpolic(?:y|ies)\s+(?:applied|checked|passed|failed|enforced)\b/i },
   { name: "identifier_vocabulary", pattern: /\b(?:site\s?id|asset\s?id|merchant\s?id|workflow\s?id|approval\s?id|version\s?id|spec\s?hash|bundle\s?id|slug)\b/i },
@@ -25,6 +25,7 @@ export const MERCHANT_LANGUAGE_RULES: readonly MerchantLanguageRule[] = [
   { name: "generated_slug", pattern: /\b[a-z0-9]+(?:-[a-z0-9]+)+-[0-9a-f]{6}\b/ },
   { name: "environment_variable", pattern: /(?:^|\W)(?:PROOFGATE|HERMES|META|VAPI|AWS|CONVEX|CLOUDFLARE)_[A-Z0-9_]+/ },
   { name: "shell_verb", pattern: /(?:^|\s)(?:cd|export|execute_code|subprocess)\b/i },
+  { name: "shell_command", pattern: /\b(?:npm|npx|pnpm|yarn)\s+(?:run\s+)?[a-z0-9:_-]+/i },
   { name: "internal_path", pattern: /\/opt\/proofgate/i },
   { name: "opaque_identifier", pattern: /\b[a-f0-9]{48,}\b/i },
   { name: "preview_token", pattern: /\bpgp_[A-Za-z0-9_-]{8,}/ },

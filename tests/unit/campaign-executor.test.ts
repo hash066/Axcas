@@ -19,8 +19,8 @@ describe("approved campaign executor", () => {
   it("uses one exact approval for one organic publication, one paid experiment and metric checkpoints", async () => {
     const approval = { schemaVersion: 2 as const, approvalId: "approval-maya", campaignId: campaign.campaignId, merchantId: campaign.merchantId, ownerWaIdHash: "a".repeat(64), scopeHash: await createCampaignScopeHash(campaign), expiresAt: 1_801_000_000_000, decision: "approved" as const, decidedAt: 1_800_000_000_000 };
     const publishOrganic = vi.fn(async () => ({ containerId: "container-1", mediaId: "media-1", receiptHash: "b".repeat(64) }));
-    const createPaidPaused = vi.fn(async () => ({ providerCampaignId: "campaign-1", providerAdSetId: "adset-1", providerAdIds: ["ad-1", "ad-2", "ad-3"], receiptHash: "c".repeat(64) }));
-    const activatePaid = vi.fn(async () => ({ receiptHash: "d".repeat(64) }));
+    const createPaidPaused = vi.fn(async () => ({ providerCampaignId: "campaign-1", providerAdSetId: "adset-1", providerAdIds: ["ad-1", "ad-2", "ad-3"], receiptHash: "c".repeat(64), status: "PAUSED" as const, lifetimeBudgetInr: 300 }));
+    const activatePaid = vi.fn(async () => ({ receiptHash: "d".repeat(64), status: "ACTIVE" as const, lifetimeBudgetInr: 300 }));
     const scheduleCheckpoint = vi.fn(async () => undefined);
     const recordPublication = vi.fn(async () => undefined);
     const result = await executeApprovedCampaign({ campaign, approval, connection: {
@@ -32,6 +32,8 @@ describe("approved campaign executor", () => {
     expect(activatePaid).toHaveBeenCalledWith(expect.objectContaining({ providerCampaignId: "campaign-1", approvedBudgetInr: 300 }));
     expect(scheduleCheckpoint).toHaveBeenCalledTimes(6);
     expect(recordPublication).toHaveBeenCalledTimes(2);
+    expect(publishOrganic).toHaveBeenCalledWith(expect.objectContaining({ idempotencyKey: expect.stringMatching(/^[a-f0-9]{64}$/) }));
+    expect(createPaidPaused).toHaveBeenCalledWith(expect.objectContaining({ idempotencyKey: expect.stringMatching(/^[a-f0-9]{64}$/) }));
   });
 
   it("refuses expired or edited approvals before any provider action", async () => {
@@ -41,5 +43,27 @@ describe("approved campaign executor", () => {
       schemaVersion: 1, connectionId: "meta-maya", merchantId: "merchant-maya", instagramAccountId: "178900001", encryptedTokenRef: "kms://dynamodb/merchant-maya/meta-maya", scopes: ["instagram_content_publish"], expiresAt: 1_900_000_000_000, capabilities: { reelPublishing: true, trialReels: "unknown", paidAds: false }, connectedAt: 1,
     }, now: 1_800_000_100_000 }, { publishOrganic, createPaidPaused: vi.fn(), activatePaid: vi.fn(), scheduleCheckpoint: vi.fn(), recordPublication: vi.fn() })).rejects.toThrow();
     expect(publishOrganic).not.toHaveBeenCalled();
+  });
+
+  it("validates paid permissions before publishing anything", async () => {
+    const approval = { schemaVersion: 2 as const, approvalId: "approval-maya", campaignId: campaign.campaignId, merchantId: campaign.merchantId, ownerWaIdHash: "a".repeat(64), scopeHash: await createCampaignScopeHash(campaign), expiresAt: 1_801_000_000_000, decision: "approved" as const, decidedAt: 1_800_000_000_000 };
+    const publishOrganic = vi.fn();
+    await expect(executeApprovedCampaign({ campaign, approval, connection: {
+      schemaVersion: 1, connectionId: "meta-maya", merchantId: "merchant-maya", instagramAccountId: "178900001", encryptedTokenRef: "kms://dynamodb/merchant-maya/meta-maya", scopes: ["instagram_content_publish"], expiresAt: 1_900_000_000_000, capabilities: { reelPublishing: true, trialReels: "unsupported", paidAds: false }, connectedAt: 1,
+    }, now: 1_800_000_100_000 }, { publishOrganic, createPaidPaused: vi.fn(), activatePaid: vi.fn(), scheduleCheckpoint: vi.fn(), recordPublication: vi.fn() })).rejects.toThrow("Ad Account permission");
+    expect(publishOrganic).not.toHaveBeenCalled();
+  });
+
+  it("never activates a paid campaign unless the prepared receipt is paused at the exact approved ceiling", async () => {
+    const approval = { schemaVersion: 2 as const, approvalId: "approval-maya", campaignId: campaign.campaignId, merchantId: campaign.merchantId, ownerWaIdHash: "a".repeat(64), scopeHash: await createCampaignScopeHash(campaign), expiresAt: 1_801_000_000_000, decision: "approved" as const, decidedAt: 1_800_000_000_000 };
+    const activatePaid = vi.fn();
+    await expect(executeApprovedCampaign({ campaign, approval, connection: {
+      schemaVersion: 1, connectionId: "meta-maya", merchantId: "merchant-maya", instagramAccountId: "178900001", facebookPageId: "190000001", adAccountId: "act_123456789", encryptedTokenRef: "kms://dynamodb/merchant-maya/meta-maya", scopes: ["instagram_content_publish", "ads_management"], expiresAt: 1_900_000_000_000, capabilities: { reelPublishing: true, trialReels: "unsupported", paidAds: true }, connectedAt: 1,
+    }, now: 1_800_000_100_000 }, {
+      publishOrganic: vi.fn(async () => ({ containerId: "container-1", mediaId: "media-1", receiptHash: "b".repeat(64) })),
+      createPaidPaused: vi.fn(async () => ({ providerCampaignId: "campaign-1", providerAdSetId: "adset-1", providerAdIds: ["ad-1", "ad-2", "ad-3"], receiptHash: "c".repeat(64), status: "PAUSED" as const, lifetimeBudgetInr: 301 })),
+      activatePaid, scheduleCheckpoint: vi.fn(), recordPublication: vi.fn(),
+    })).rejects.toThrow("approved spend ceiling");
+    expect(activatePaid).not.toHaveBeenCalled();
   });
 });

@@ -58,6 +58,11 @@ and call the internal boundary. Never call Convex or edit production/release sta
 
 If the admin boundary is temporarily unavailable, retain the already received business fields and provider media references in the sender-bound Hermes session and retry automatically after recovery or on the next turn. Send only: “I’ve saved everything you sent. I’m reconnecting and will continue automatically—you do not need to resend anything.” Never show environment-variable names, credential names, provider diagnostics, stack traces, or an operator setup choice to a merchant.
 
+The customer-output hook silently suppresses any LLM-authored reply containing technical or
+operator-only language. Do not replace that suppression with an apology, diagnostic, or setup
+request. Only a genuine typed-boundary failure may produce the saved-and-reconnecting message,
+and a replayed inbound message must not produce it twice.
+
 ## Decision policy
 
 Create one `DecisionPolicyV1` during onboarding and reuse it across messages. The normal default is `fast_pilot`: autonomously transcribe voice, ingest supplied assets, extract the catalog, draft copy, create a candidate, request verification, generate three reel angles, summarize metrics, and propose improvements. Use the typed `decision` action before crossing an action boundary; do not ask the merchant again when the result is `allow`.

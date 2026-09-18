@@ -23,6 +23,12 @@ describe("merchant language guard", () => {
     expect(findMerchantLanguageViolations("Open https://axcas.example/preview/pgp_eyJzaXRlSWQi")).toEqual(["preview_token"]);
   });
 
+  it("blocks AWS, Meta and backend diagnostics at the final send boundary", () => {
+    expect(findMerchantLanguageViolations("AWS Lambda returned HTTP 503 from the provider")).toContain("vendor_or_infrastructure");
+    expect(findMerchantLanguageViolations("Meta token refresh failed in the backend")).toContain("vendor_or_infrastructure");
+    expect(findMerchantLanguageViolations("npm run proofgate -- release")).toContain("shell_command");
+  });
+
   it("allows merchant words that merely look technical", () => {
     expect(findMerchantLanguageViolations("Your cancellation policy is on the site.")).toEqual([]);
     expect(findMerchantLanguageViolations("Checked on a phone, including the WhatsApp button")).toEqual([]);

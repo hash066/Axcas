@@ -1,0 +1,27 @@
+/**
+ * Browser-only Cognito custom-auth adapter. It deliberately uses the public
+ * Cognito client identifier and never accepts provider credentials.
+ */
+export function renderAwsStudioAuthJs(): string {
+  return `(()=>{
+'use strict';
+const config=window.__AXCAS_CONFIG__;
+if(!config)return;
+const apiOrigin=new URL(config.apiUrl).origin;
+const cognitoUrl='https://cognito-idp.'+config.region+'.amazonaws.com/';
+const initiateTarget='AWSCognitoIdentityProviderService.InitiateAuth';
+const respondTarget='AWSCognitoIdentityProviderService.RespondToAuthChallenge';
+const storageKey='axcas-studio-session:'+config.cognitoClientId;
+const readSession=()=>{try{const value=JSON.parse(sessionStorage.getItem(storageKey)||'null');if(!value?.IdToken)return null;const payload=JSON.parse(atob(value.IdToken.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));if(!Number.isFinite(payload.exp)||payload.exp*1000<=Date.now()+30000){sessionStorage.removeItem(storageKey);return null}return value}catch{sessionStorage.removeItem(storageKey);return null}};
+const cognito=async(target,body)=>{const response=await fetch(cognitoUrl,{method:'POST',headers:{'content-type':'application/x-amz-json-1.1','x-amz-target':target},body:JSON.stringify(body)});const result=await response.json().catch(()=>({}));if(!response.ok){const name=String(result.__type||'').split('#').pop();if(name==='UserNotFoundException'||name==='NotAuthorizedException')throw new Error('Start AXCAS on WhatsApp first, then return here to sign in.');if(name==='CodeMismatchException')throw new Error('That code is not correct. Check WhatsApp and try again.');if(name==='ExpiredCodeException')throw new Error('That code expired. Request a new one.');if(name==='TooManyRequestsException')throw new Error('Please wait a moment before trying again.');throw new Error('Sign-in is temporarily unavailable. Try again shortly.')}return result};
+const cleanPhone=(value)=>{const compact=String(value||'').replace(/[\\s()-]/g,'');if(!/^\\+[1-9]\\d{7,14}$/.test(compact))throw new Error('Enter your WhatsApp number with country code, for example +91 98765 43210.');return compact};
+function showSignIn(onAuthenticated){const panel=document.querySelector('#linkPanel');const status=document.querySelector('#linkStatus');const link=document.querySelector('#whatsappLink');if(!panel||!status)return;panel.querySelector('h2').textContent='Sign in with your WhatsApp number';panel.querySelector('p:not(.eyebrow)').textContent='We will send one private six-digit code to your verified WhatsApp. No password or API key needed.';if(link)link.classList.add('hidden');let form=panel.querySelector('#awsSignInForm');if(!form){form=document.createElement('form');form.id='awsSignInForm';form.className='aws-sign-in';form.innerHTML='<label>WhatsApp number<input name="phone" type="tel" autocomplete="tel" inputmode="tel" placeholder="+91 98765 43210" required></label><label class="hidden" data-code-field>Six-digit code<input name="code" type="text" autocomplete="one-time-code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6"></label><button class="primary" type="submit">Send my code</button>';status.before(form)}
+let pendingSession='';let username='';const button=form.querySelector('button');const codeField=form.querySelector('[data-code-field]');form.onsubmit=async(event)=>{event.preventDefault();button.disabled=true;try{if(!pendingSession){username=cleanPhone(new FormData(form).get('phone'));status.textContent='Sending a private code to WhatsApp…';const started=await cognito(initiateTarget,{AuthFlow:'CUSTOM_AUTH',ClientId:config.cognitoClientId,AuthParameters:{USERNAME:username}});if(started.ChallengeName!=='CUSTOM_CHALLENGE'||!started.Session)throw new Error('Sign-in could not start. Try again.');pendingSession=started.Session;codeField.classList.remove('hidden');codeField.querySelector('input').required=true;button.textContent='Verify and open Studio';status.textContent='Code sent. Enter it here to open your workspace.';codeField.querySelector('input').focus()}else{const answer=String(new FormData(form).get('code')||'').trim();if(!/^\\d{6}$/.test(answer))throw new Error('Enter the six-digit code from WhatsApp.');status.textContent='Checking your code…';const completed=await cognito(respondTarget,{ChallengeName:'CUSTOM_CHALLENGE',ClientId:config.cognitoClientId,Session:pendingSession,ChallengeResponses:{USERNAME:username,ANSWER:answer}});if(!completed.AuthenticationResult?.IdToken)throw new Error('Sign-in could not finish. Request a new code.');sessionStorage.setItem(storageKey,JSON.stringify(completed.AuthenticationResult));status.textContent='Signed in. Opening your workspace…';onAuthenticated()}}catch(error){status.textContent=error instanceof Error?error.message:'Sign-in is temporarily unavailable.'}finally{button.disabled=false}}}
+window.__AXCAS_STUDIO_AUTH__=Object.freeze({
+  begin:({onAuthenticated})=>showSignIn(onAuthenticated),
+  restore:async()=>Boolean(readSession()),
+  logout:()=>sessionStorage.removeItem(storageKey),
+  fetch:(path,options={})=>{const session=readSession();const target=new URL(path,config.apiUrl.endsWith('/')?config.apiUrl:config.apiUrl+'/');if(target.origin!==apiOrigin)throw new Error('Axcas blocked an unexpected API destination.');const headers=new Headers(options.headers||{});if(session?.IdToken)headers.set('Authorization','Bearer '+session.IdToken);return fetch(target.toString(),{...options,headers})}
+});
+})();`;
+}

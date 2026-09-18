@@ -53,8 +53,9 @@ describe("AWS-native production architecture", () => {
     const deploy = readFileSync(deployScript, "utf8");
     const workflow = readFileSync(productionGate, "utf8");
     expect(deploy).toContain("git -C $workspace status --porcelain");
-    expect(deploy).toContain("mcr.microsoft.com/playwright:v1.57.0-noble");
-    expect(deploy).toContain("npm run typecheck && npm test");
+    expect(deploy).toContain("api.github.com/repos/hash066/Axcas/commits/$sourceRevision/check-runs");
+    expect(deploy).toContain("conclusion -eq 'success'");
+    expect(deploy).toContain("docker image rm $taggedUri");
     expect(deploy).toContain("aws cloudformation validate-template");
     expect(workflow).toContain("npm ci");
     expect(workflow).toContain("pipx run cfn-lint infra/aws-native/template.yaml");

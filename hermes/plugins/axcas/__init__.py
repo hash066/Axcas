@@ -16,8 +16,8 @@ from typing import Any
 
 
 SAFE_RETRY_MESSAGE = (
-    "Axcas hit a temporary connection problem. Your message is still in this "
-    "chat, and I’ll continue automatically—you do not need to resend anything."
+    "I’ve saved everything you sent. I’m reconnecting and will continue "
+    "automatically—you do not need to resend anything."
 )
 
 _WHATSAPP_PLATFORMS = frozenset({"whatsapp", "whatsapp_cloud"})
@@ -36,9 +36,10 @@ _ACTIONS = frozenset({
 })
 
 # This is a fail-closed customer-output policy, not a best-effort secret masker.
-# Any match replaces the complete reply with SAFE_RETRY_MESSAGE.
+# LLM-authored technical output is suppressed. A real bridge failure separately returns the
+# durable SAFE_RETRY_MESSAGE, so a blocked model response cannot create repetitive fake errors.
 _FORBIDDEN_CUSTOMER_OUTPUT = tuple(re.compile(pattern, re.IGNORECASE | re.MULTILINE) for pattern in (
-    r"(?:PROOFGATE|HERMES|META|VAPI|AWS)_[A-Z0-9_]+",
+    r"(?:PROOFGATE|HERMES|META|VAPI|AWS|CONVEX|CLOUDFLARE)_[A-Z0-9_]+",
     r"\b(?:npm\s+run\s+proofgate|execute_code|subprocess|os\.environ|export\s+[A-Z_]+)",
     r"(?:^|\s)(?:/opt/|/tmp/|/etc/proofgate/|[A-Z]:\\Users\\)",
     r"```",
@@ -46,7 +47,11 @@ _FORBIDDEN_CUSTOMER_OUTPUT = tuple(re.compile(pattern, re.IGNORECASE | re.MULTIL
     r"\b(?:Authorization|Bearer)\s+[A-Za-z0-9._~+/=-]+",
     r"\b(?:provider authentication failed|raw provider details|gateway logs|stack trace|traceback)\b",
     r"\b(?:shell command|backend credentials?|database connection|configure the backend|set up the server)\b",
-    r"\bProofGate\b",
+    r"\b(?:ProofGate|Convex|Cloudflare|Hermes|Vapi|Bedrock|Strands|Meta|AWS|Lambda|S3|DynamoDB|SQS|Fargate|CloudFront|Cognito|API Gateway|WAF|Polly|FFmpeg|backend|provider)\b",
+    r"\b(?:candidate|capabilit(?:y|ies)|verifier|verification|intake|rollback)\b",
+    r"\b(?:site\s?id|asset\s?id|merchant\s?id|workflow\s?id|approval\s?id|version\s?id|spec\s?hash|bundle\s?id|slug)\b",
+    r"\b(?:SiteSpecV[23]|SiteSpec|schemaVersion|specHash)\b",
+    r"\bpg:[a-z0-9-]{3,64}:(?:approve|deny)\b",
     r"Command Approval Required",
 ))
 
@@ -60,7 +65,7 @@ def filter_customer_output(response_text: str, platform: str) -> str:
     if not response_text.strip():
         return response_text
     if any(pattern.search(response_text) for pattern in _FORBIDDEN_CUSTOMER_OUTPUT):
-        return SAFE_RETRY_MESSAGE
+        return ""
     return response_text
 
 
@@ -94,9 +99,10 @@ def _call_bridge(action: str, payload: Any) -> str:
         socket_path = os.environ.get("AXCAS_BRIDGE_SOCKET", "/run/axcas/tool-bridge.sock")
         if not socket_path.startswith("/run/axcas/") or not socket_path.endswith(".sock"):
             raise ValueError("bridge unavailable")
+        request_context = _session_context()
         request_body = json.dumps({
             "action": action,
-            "context": _session_context(),
+            "context": request_context,
             "payload": payload,
         }, separators=(",", ":")).encode("utf-8")
         if len(request_body) > 1024 * 1024:
@@ -128,6 +134,17 @@ def _call_bridge(action: str, payload: Any) -> str:
             "accepted", "preview_ready", "approval_sent", "temporarily_unavailable"
         }:
             raise ValueError("bridge unavailable")
+        customer_message = allowed.get("customerMessage")
+        if customer_message is not None:
+            if not isinstance(customer_message, str):
+                raise ValueError("bridge unavailable")
+            filtered_message = filter_customer_output(customer_message, request_context["platform"])
+            if filtered_message != customer_message:
+                allowed = {
+                    "status": "temporarily_unavailable",
+                    "customerMessage": SAFE_RETRY_MESSAGE,
+                    "notifyCustomer": True,
+                }
         return json.dumps(allowed, separators=(",", ":"))
     except Exception:
         return json.dumps({
@@ -168,6 +185,12 @@ def _block_non_axcas_tools(tool_name: str, **_kwargs: Any) -> dict[str, str] | N
 
 
 def _filter_llm_output(response_text: str, platform: str = "", **_kwargs: Any) -> str | None:
+    if not platform:
+        try:
+            from gateway.session_context import get_session_env
+            platform = get_session_env("HERMES_SESSION_PLATFORM", "")
+        except Exception:
+            platform = ""
     filtered = filter_customer_output(response_text, platform)
     return filtered if filtered != response_text else None
 

@@ -8,8 +8,9 @@ import {
   runStrandsToolWorkflow,
   type MerchantWorkflowInput,
 } from "../../strands-orchestrator/src";
+import { assertMerchantSafeText } from "../../../packages/whatsapp-io/src/merchant-language";
 
-export const SAFE_RETRY_MESSAGE = "Axcas hit a temporary connection problem. Your message is still in this chat, and I’ll continue automatically—you do not need to resend anything.";
+export const SAFE_RETRY_MESSAGE = "I’ve saved everything you sent. I’m reconnecting and will continue automatically—you do not need to resend anything.";
 
 const BridgeContextSchema = z.object({
   platform: z.enum(["whatsapp", "whatsapp_cloud"]),
@@ -183,6 +184,40 @@ function safeResult(action: BridgeRequest["action"], raw: unknown): BridgeResult
   };
 }
 
+const missingFactCopy: Readonly<Record<string, string>> = {
+  businessName: "what is your business name",
+  description: "how would you describe the business",
+  fulfillmentArea: "which area do you serve",
+  serviceArea: "which area do you serve",
+  leadTime: "how much advance notice do you need",
+  offerings: "what do you sell or offer",
+  prices: "what prices should I show",
+  orderWhatsAppNumber: "which WhatsApp number should customers contact",
+  photos: "can you send at least one real business photo",
+  referenceAssetIds: "can you send at least one real business photo",
+};
+
+function naturalList(items: readonly string[]): string {
+  if (items.length === 1) return items[0]!;
+  if (items.length === 2) return `${items[0]} and ${items[1]}`;
+  return `${items.slice(0, -1).join(", ")}, and ${items.at(-1)}`;
+}
+
+/**
+ * Customer copy is deterministic and derived from the complete missing-fact set. Model-written
+ * question fragments are never forwarded, which prevents both sequential questioning and
+ * accidental diagnostic leakage.
+ */
+function consolidatedMissingFactsMessage(missingFacts: readonly string[]): string {
+  const facts = Array.from(new Set(missingFacts.map((fact) => missingFactCopy[fact] ?? "what other essential detail is missing")));
+  if (facts.length === 0) throw new Error("workflow requested input without naming a missing fact");
+  const message = facts.length === 1 && facts[0] === missingFactCopy.photos
+    ? "Please send at least one real business photo."
+    : `One quick thing before I build: ${naturalList(facts)}?`;
+  assertMerchantSafeText(message, "missing-information question");
+  return message;
+}
+
 export async function executeBridgeRequest(
   input: unknown,
   submit: Submit = submitCommand,
@@ -203,7 +238,7 @@ export async function executeBridgeRequest(
       stage = "workflow_execution";
       const result = await runBuildWorkflow(workflowInput, new ProofGateBoundary(env, submit));
       if (result.status === "awaiting_input") {
-        return { status: "accepted", customerMessage: result.customerMessages[0]!, notifyCustomer: true };
+        return { status: "accepted", customerMessage: consolidatedMissingFactsMessage(result.missingFacts), notifyCustomer: true };
       }
       if (result.status === "verification_failed") {
         return { status: "accepted", customerMessage: "I found an issue while checking the preview. I’ll keep the current draft private until it passes.", notifyCustomer: true };

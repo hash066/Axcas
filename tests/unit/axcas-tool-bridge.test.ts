@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { executeBridgeRequest, parseBridgeRequest } from "../../apps/axcas-tool-bridge/src/bridge";
+import { executeBridgeRequest, parseBridgeRequest, SAFE_RETRY_MESSAGE } from "../../apps/axcas-tool-bridge/src/bridge";
 import { buildStudioWebsite } from "../../packages/domain/src/studio-builder";
 
 const context = {
@@ -179,6 +179,60 @@ describe("Axcas typed tool bridge", () => {
       customerMessage: "Please send at least one real business photo.",
     });
     expect(runWorkflow).toHaveBeenCalledOnce();
+  });
+
+  it("consolidates every missing fact into one customer-safe question", async () => {
+    const result = await executeBridgeRequest(
+      {
+        action: "orchestrate_build",
+        context,
+        payload: { transcript: "I need a website for my business." },
+      },
+      vi.fn(),
+      {
+        PROOFGATE_ADMIN_URL: "https://example.workers.dev",
+        PROOFGATE_SERVICE_SECRET: "server-only-secret-material-12345",
+      },
+      async () => ({
+        status: "awaiting_input" as const,
+        missingFacts: ["businessName", "offerings", "photos", "leadTime"],
+        customerMessages: [
+          "What is your business name?",
+          "What do you offer?",
+          "Please send a photo.",
+          "How much notice do you need?",
+        ],
+      }),
+    );
+
+    expect(result).toEqual({
+      status: "accepted",
+      notifyCustomer: true,
+      customerMessage: "One quick thing before I build: what is your business name, what do you sell or offer, can you send at least one real business photo, and how much advance notice do you need?",
+    });
+  });
+
+  it("never returns model-written technical diagnostics as customer copy", async () => {
+    const result = await executeBridgeRequest(
+      {
+        action: "orchestrate_build",
+        context,
+        payload: { transcript: "Maya Studio makes custom blouses in Bengaluru." },
+      },
+      vi.fn(),
+      {
+        PROOFGATE_ADMIN_URL: "https://example.workers.dev",
+        PROOFGATE_SERVICE_SECRET: "server-only-secret-material-12345",
+      },
+      async () => ({
+        status: "awaiting_input" as const,
+        missingFacts: ["photos"],
+        customerMessages: ["PROOFGATE_SERVICE_SECRET is missing; approve this shell command."],
+      }),
+    );
+
+    expect(result).toEqual({ status: "accepted", notifyCustomer: true, customerMessage: "Please send at least one real business photo." });
+    expect(JSON.stringify(result)).not.toMatch(/PROOFGATE|secret|shell|command/i);
   });
 
   it("logs only a sanitized stage and failure class for runtime diagnosis", async () => {

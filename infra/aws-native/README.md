@@ -13,7 +13,7 @@ During the migration, `MigrationAdminOriginUrl` deliberately keeps Hermes' typed
 - SQS FIFO ingress/campaign queues with DLQs
 - redundant Fargate Hermes/relay/tool-boundary tasks and a finite Strands task definition
 - Standard Step Functions, Scheduler, CloudWatch alarms, and SNS alerts
-- an Amplify application shell for Studio (Studio artifacts are deployed separately)
+- an Amplify application plus the separately deployed static Studio artifact in `apps/aws-studio`
 
 Hermes is pinned to installed version `0.18.2` at exact commit `88a58ff1355eabe468b4dcd4e152a596932632e6`. Its customer channel enables only the Axcas plugin. The plugin blocks every non-Axcas tool and filters command text, credentials, provider diagnostics, hashes, stack traces, and infrastructure language from WhatsApp output.
 
@@ -38,6 +38,14 @@ The stack initially creates its provider secret with unusable placeholders plus 
 - `OPENROUTER_API_KEY` (only if Hermes continues to use that inference provider)
 
 Preserve the generated `PROOFGATE_SERVICE_SECRET` during the replacement. Customers provide none of these values.
+
+Deploy the Studio artifact after the stack finishes:
+
+```powershell
+./apps/aws-studio/deploy.ps1 -StackName axcas-beta -Region ap-south-1
+```
+
+This reads the public API and Cognito outputs, creates a static bundle from the code-owned Studio renderer, and uploads it through an Amplify manual-deployment job. It does not read provider secrets. See `apps/aws-studio/README.md` for the current API-parity boundary.
 
 ## Gates before cutover
 
