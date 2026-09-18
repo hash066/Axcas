@@ -8,7 +8,11 @@ ENV HERMES_HOME=/var/lib/hermes \
 
 RUN apt-get update && apt-get install -y --no-install-recommends git ffmpeg ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && git clone --depth 1 --branch "${HERMES_GIT_REF}" https://github.com/NousResearch/hermes-agent.git /opt/hermes \
+    && git init /opt/hermes \
+    && git -C /opt/hermes remote add origin https://github.com/NousResearch/hermes-agent.git \
+    && git -C /opt/hermes fetch --depth 1 origin "${HERMES_GIT_REF}" \
+    && git -C /opt/hermes checkout --detach FETCH_HEAD \
+    && test "$(git -C /opt/hermes rev-parse HEAD)" = "${HERMES_GIT_REF}" \
     && pip install --no-cache-dir "/opt/hermes[messaging]" \
     && useradd --system --create-home --home-dir /var/lib/hermes hermes \
     && mkdir -p /var/lib/hermes/plugins/axcas /var/lib/hermes/skills/proofgate /run/axcas

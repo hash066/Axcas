@@ -1,0 +1,107 @@
+version: 0.2
+
+env:
+  shell: bash
+
+phases:
+  install:
+    commands:
+      - set -euo pipefail
+      - test "$SOURCE_REVISION" != ""
+      - test "$ENVIRONMENT_NAME" != ""
+      - '[[ "$SOURCE_REVISION" =~ ^[0-9a-f]{40}$ ]]'
+      - '[[ "$ENVIRONMENT_NAME" =~ ^[a-z][a-z0-9-]{1,15}$ ]]'
+  pre_build:
+    commands:
+      - set -euo pipefail
+      - >-
+        CHECKS="$(curl --fail --silent --show-error
+        -H 'Accept: application/vnd.github+json'
+        -H 'User-Agent: axcas-codebuild-deployer'
+        "https://api.github.com/repos/hash066/Axcas/commits/$SOURCE_REVISION/check-runs")"
+      - >-
+        jq -e --arg sha "$SOURCE_REVISION"
+        '.check_runs[] | select(.name == "verify" and .head_sha == $sha and .status == "completed" and .conclusion == "success" and .app.slug == "github-actions")'
+        <<<"$CHECKS" >/dev/null
+      - unset CHECKS
+      - mkdir -p "$CODEBUILD_SRC_DIR/source"
+      - cd "$CODEBUILD_SRC_DIR/source"
+      - git init --quiet
+      - git remote add origin https://github.com/hash066/Axcas.git
+      - git fetch --depth=1 origin "$SOURCE_REVISION"
+      - git checkout --quiet --detach FETCH_HEAD
+      - test "$(git rev-parse HEAD)" = "$SOURCE_REVISION"
+      - aws cloudformation validate-template --template-body file://infra/aws-native/template.yaml >/dev/null
+      - export ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+      - '[[ "$ACCOUNT_ID" =~ ^[0-9]{12}$ ]]'
+      - export REGISTRY="$ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com"
+      - aws ecr get-login-password | docker login --username AWS --password-stdin "$REGISTRY" >/dev/null
+  build:
+    commands:
+      - set -euo pipefail
+      - cd "$CODEBUILD_SRC_DIR/source"
+      - ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+      - export REGISTRY="$ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com"
+      - export CONTROL_REPOSITORY="axcas-$ENVIRONMENT_NAME-control-plane"
+      - export WORKER_REPOSITORY="axcas-$ENVIRONMENT_NAME-worker"
+      - export HERMES_REPOSITORY="axcas-$ENVIRONMENT_NAME-hermes"
+      - |
+        build_if_missing() {
+          local repository="$1" dockerfile="$2" image="$REGISTRY/$repository:$SOURCE_REVISION"
+          if aws ecr describe-images --repository-name "$repository" --image-ids imageTag="$SOURCE_REVISION" >/dev/null 2>&1; then
+            echo "Reusing immutable image for $repository at the exact source revision."
+            return
+          fi
+          docker build --pull --file "$dockerfile" --tag "$image" .
+          docker push "$image"
+          docker image rm "$image" >/dev/null
+        }
+        build_if_missing "$CONTROL_REPOSITORY" infra/aws-native/Dockerfile.control-plane
+        build_if_missing "$WORKER_REPOSITORY" infra/aws-native/Dockerfile.worker
+        build_if_missing "$HERMES_REPOSITORY" infra/aws-native/Dockerfile.hermes
+  post_build:
+    commands:
+      - set -euo pipefail
+      - test "$CODEBUILD_BUILD_SUCCEEDING" = "1"
+      - cd "$CODEBUILD_SRC_DIR/source"
+      - ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+      - REGISTRY="$ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com"
+      - CONTROL_REPOSITORY="axcas-$ENVIRONMENT_NAME-control-plane"
+      - WORKER_REPOSITORY="axcas-$ENVIRONMENT_NAME-worker"
+      - HERMES_REPOSITORY="axcas-$ENVIRONMENT_NAME-hermes"
+      - CONTROL_DIGEST="$(aws ecr describe-images --repository-name "$CONTROL_REPOSITORY" --image-ids imageTag="$SOURCE_REVISION" --query 'imageDetails[0].imageDigest' --output text)"
+      - WORKER_DIGEST="$(aws ecr describe-images --repository-name "$WORKER_REPOSITORY" --image-ids imageTag="$SOURCE_REVISION" --query 'imageDetails[0].imageDigest' --output text)"
+      - HERMES_DIGEST="$(aws ecr describe-images --repository-name "$HERMES_REPOSITORY" --image-ids imageTag="$SOURCE_REVISION" --query 'imageDetails[0].imageDigest' --output text)"
+      - '[[ "$CONTROL_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]'
+      - '[[ "$WORKER_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]'
+      - '[[ "$HERMES_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]'
+      - STACK_NAME="axcas-$ENVIRONMENT_NAME-native"
+      - CHANGE_SET_NAME="axcas-$ENVIRONMENT_NAME-$SOURCE_REVISION"
+      - if aws cloudformation describe-stacks --stack-name "$STACK_NAME" >/dev/null 2>&1; then CHANGE_SET_TYPE=UPDATE; WAIT_TARGET=stack-update-complete; else CHANGE_SET_TYPE=CREATE; WAIT_TARGET=stack-create-complete; fi
+      - >-
+        aws cloudformation create-change-set
+        --stack-name "$STACK_NAME"
+        --change-set-name "$CHANGE_SET_NAME"
+        --change-set-type "$CHANGE_SET_TYPE"
+        --template-body file://infra/aws-native/template.yaml
+        --role-arn "$CLOUDFORMATION_SERVICE_ROLE_ARN"
+        --capabilities CAPABILITY_IAM
+        --parameters
+        "ParameterKey=EnvironmentName,ParameterValue=$ENVIRONMENT_NAME"
+        "ParameterKey=ControlPlaneImageUri,ParameterValue=$REGISTRY/$CONTROL_REPOSITORY@$CONTROL_DIGEST"
+        "ParameterKey=WorkerImageUri,ParameterValue=$REGISTRY/$WORKER_REPOSITORY@$WORKER_DIGEST"
+        "ParameterKey=HermesImageUri,ParameterValue=$REGISTRY/$HERMES_REPOSITORY@$HERMES_DIGEST"
+        "ParameterKey=WhatsAppNumber,ParameterValue=919180499647"
+        >/dev/null
+      - |
+        if ! aws cloudformation wait change-set-create-complete --stack-name "$STACK_NAME" --change-set-name "$CHANGE_SET_NAME"; then
+          REASON="$(aws cloudformation describe-change-set --stack-name "$STACK_NAME" --change-set-name "$CHANGE_SET_NAME" --query StatusReason --output text)"
+          if [[ "$REASON" == *"didn't contain changes"* || "$REASON" == *"No updates are to be performed"* ]]; then
+            echo "Exact revision is already deployed; no stack changes."
+            exit 0
+          fi
+          echo "CloudFormation rejected the reviewed change set." >&2
+          exit 1
+        fi
+      - aws cloudformation execute-change-set --stack-name "$STACK_NAME" --change-set-name "$CHANGE_SET_NAME"
+      - aws cloudformation wait "$WAIT_TARGET" --stack-name "$STACK_NAME"

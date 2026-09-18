@@ -38,6 +38,8 @@ describe("AWS-native production architecture", () => {
     expect(readFileSync(workerDockerfile, "utf8")).toContain("ffmpeg");
     const hermes = readFileSync(hermesDockerfile, "utf8");
     expect(hermes).toContain("HERMES_GIT_REF=88a58ff1355eabe468b4dcd4e152a596932632e6");
+    expect(hermes).toContain('git -C /opt/hermes fetch --depth 1 origin "${HERMES_GIT_REF}"');
+    expect(hermes).toContain('test "$(git -C /opt/hermes rev-parse HEAD)" = "${HERMES_GIT_REF}"');
     expect(hermes).toContain('org.opencontainers.image.version="0.18.2"');
     expect(hermes).toContain("hermes/plugins/axcas");
     expect(template).toContain("OrchestrationTask:");
@@ -59,5 +61,6 @@ describe("AWS-native production architecture", () => {
     expect(deploy).toContain("aws cloudformation validate-template");
     expect(workflow).toContain("npm ci");
     expect(workflow).toContain("pipx run cfn-lint infra/aws-native/template.yaml");
+    expect(workflow).toContain("pipx run cfn-lint infra/aws-native/codebuild-bootstrap.yaml");
   });
 });

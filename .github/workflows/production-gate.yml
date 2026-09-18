@@ -30,4 +30,5 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: pipx run cfn-lint infra/aws-native/template.yaml
+      - run: pipx run cfn-lint infra/aws-native/codebuild-bootstrap.yaml
       - run: git diff --check

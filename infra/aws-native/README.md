@@ -19,13 +19,27 @@ Hermes is pinned to installed version `0.18.2` at exact commit `88a58ff1355eabe4
 
 ## Deploy
 
-Run from a machine or AWS CloudShell with AWS CLI, Git, Docker, and PowerShell:
+Run from a machine with sufficient Docker storage:
 
 ```powershell
 ./infra/aws-native/deploy.ps1 -EnvironmentName beta -Region ap-south-1
 ```
 
 The script creates immutable/scanned ECR repositories, builds the three checked-in Dockerfiles, pushes content-addressed images, validates the AWS identity, and deploys CloudFormation. It never reads or writes provider credentials.
+
+For AWS CloudShell, use the CodeBuild bootstrap so no image layers are built or retained in the small CloudShell filesystem. The launcher refuses a dirty checkout, requires the exact checked-out 40-character commit, and independently requires that commit's successful GitHub Actions `verify` check. CodeBuild clones that detached revision, repeats the check, builds in an isolated privileged Linux environment with 128 GB ephemeral disk, and deploys only ECR image digests:
+
+```powershell
+./infra/aws-native/bootstrap-codebuild.ps1 -SourceRevision (git rev-parse HEAD) -EnvironmentName beta -Region ap-south-1
+```
+
+The command returns a CodeBuild build ID. Follow it without exposing environment data:
+
+```powershell
+aws codebuild batch-get-builds --ids <build-id> --region ap-south-1 --query 'builds[0].{Status:buildStatus,Logs:logs.deepLink}' --output table
+```
+
+The launcher idempotently reuses or creates the three immutable, scan-on-push AES256 ECR repositories and refuses an existing repository with weaker settings. The bootstrap stack creates a dedicated CodeBuild project, its retained 30-day log group, and a dedicated CloudFormation service role. The build role can push only those three repositories, operate only the `axcas-beta-native` stack and its explicitly named change sets, and pass only that service role. The service role has explicit service actions instead of an AWS administrator managed policy. No provider credential is a build input or output.
 
 The stack initially creates its provider secret with unusable placeholders plus a generated internal service secret. Before any provider acceptance test, replace the placeholder JSON values in the `ProviderSecretArn` output with the real operator-owned Meta/Hermes values. Never paste these into Studio, WhatsApp, source control, CloudFormation parameters, or logs:
 
