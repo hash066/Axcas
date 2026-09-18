@@ -16,7 +16,8 @@ live evidence. Customers never provide provider API keys. They connect their own
 Professional account, Facebook Page, and optional Ad Account through one server-side Meta OAuth
 flow; Axcas stores only a KMS-encrypted token reference in durable product state.
 
-The replacement control plane is AWS-native: API Gateway/WAF verifies public ingress, FIFO SQS
+The replacement control plane is AWS-native: API Gateway HTTP API verifies public ingress and
+applies stage throttling, FIFO SQS
 absorbs WhatsApp and campaign work, Step Functions owns durable workflow transitions, redundant
 Fargate tasks run Hermes/Strands/FFmpeg, and deterministic Lambdas retain verification, approval,
 release, rollback, posting, and spend authority. DynamoDB separates mutable tenant state from the
@@ -25,6 +26,11 @@ evidence; CloudFront serves published sites, Amplify serves Studio, Cognito prov
 backed passwordless identity, EventBridge schedules measurements, and CloudWatch/SNS report
 operational failures. The existing Cloudflare/Convex service remains unchanged until this stack
 passes acceptance and must not be called migrated before then.
+
+AWS WAF cannot be associated directly with an API Gateway V2 HTTP API: its documented API Gateway
+resource type is a REST API stage. The beta therefore uses HTTP API throttling plus signature and
+JWT verification. Edge WAF remains a post-beta custom-domain/CloudFront change; the stack must not
+carry an unattached or invalid web ACL merely to claim the service.
 
 `SiteSpecV3` adds structured section order and theme/layout tokens while preserving the rule that
 agents never generate or patch page code. A deterministic renderer writes one immutable versioned

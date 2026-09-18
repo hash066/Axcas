@@ -230,15 +230,6 @@ Resources:
                   - states:ListTagsForResource
                   - states:TagResource
                   - states:UpdateStateMachine
-                  - wafv2:AssociateWebACL
-                  - wafv2:CreateWebACL
-                  - wafv2:DeleteWebACL
-                  - wafv2:DisassociateWebACL
-                  - wafv2:GetWebACL
-                  - wafv2:GetWebACLForResource
-                  - wafv2:ListTagsForResource
-                  - wafv2:TagResource
-                  - wafv2:UpdateWebACL
                 Resource: '*'
               - Sid: AxcasApiStageTags
                 Effect: Allow

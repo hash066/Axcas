@@ -838,29 +838,6 @@ Resources:
     Type: AWS::Lambda::Permission
     Properties: { Action: 'lambda:InvokeFunction', FunctionName: !Ref ControlPlaneFunction, Principal: apigateway.amazonaws.com, SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${PublicApi}/*' }
 
-  ApiWebAcl:
-    Type: AWS::WAFv2::WebACL
-    Properties:
-      Name: !Sub axcas-${EnvironmentName}-api
-      Scope: REGIONAL
-      DefaultAction: { Allow: {} }
-      VisibilityConfig: { CloudWatchMetricsEnabled: true, MetricName: !Sub 'axcas-${EnvironmentName}-api', SampledRequestsEnabled: true }
-      Rules:
-        - Name: AWSCommonRules
-          Priority: 1
-          OverrideAction: { None: {} }
-          Statement: { ManagedRuleGroupStatement: { VendorName: AWS, Name: AWSManagedRulesCommonRuleSet } }
-          VisibilityConfig: { CloudWatchMetricsEnabled: true, MetricName: common, SampledRequestsEnabled: true }
-        - Name: RateLimit
-          Priority: 2
-          Action: { Block: {} }
-          Statement: { RateBasedStatement: { Limit: 600, AggregateKeyType: IP } }
-          VisibilityConfig: { CloudWatchMetricsEnabled: true, MetricName: rate, SampledRequestsEnabled: true }
-  ApiWebAclAssociation:
-    Type: AWS::WAFv2::WebACLAssociation
-    DependsOn: PublicApiStage
-    Properties: { ResourceArn: !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}::/apis/${PublicApi}/stages/$default', WebACLArn: !GetAtt ApiWebAcl.Arn }
-
   WorkflowRole:
     Type: AWS::IAM::Role
     Properties:

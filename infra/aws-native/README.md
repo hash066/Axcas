@@ -6,7 +6,7 @@ During the migration, `MigrationAdminOriginUrl` deliberately keeps Hermes' typed
 
 ## What it creates
 
-- HTTP API + WAF and a signature-checking Lambda for the Meta webhook
+- HTTP API with stage throttling and a signature-checking Lambda for the Meta webhook
 - encrypted, PITR-enabled DynamoDB state and append-only ledgers
 - private versioned S3 media/site/evidence buckets and CloudFront site delivery
 - Cognito custom authentication with a WhatsApp-delivered code
@@ -14,6 +14,10 @@ During the migration, `MigrationAdminOriginUrl` deliberately keeps Hermes' typed
 - redundant Fargate Hermes/relay/tool-boundary tasks and a finite Strands task definition
 - Standard Step Functions, Scheduler, CloudWatch alarms, and SNS alerts
 - an Amplify application plus the separately deployed static Studio artifact in `apps/aws-studio`
+
+AWS WAF's supported API Gateway association target is a REST API stage, not this stack's V2 HTTP
+API. Edge WAF is deliberately deferred until the branded CloudFront/custom-domain layer; the beta
+does not deploy an invalid or unattached web ACL.
 
 Hermes is pinned to installed version `0.18.2` at exact commit `88a58ff1355eabe468b4dcd4e152a596932632e6`. Its customer channel enables only the Axcas plugin. The plugin blocks every non-Axcas tool and filters command text, credentials, provider diagnostics, hashes, stack traces, and infrastructure language from WhatsApp output.
 

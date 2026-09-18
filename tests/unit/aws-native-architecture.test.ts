@@ -24,7 +24,7 @@ describe("AWS-native production architecture", () => {
     for (const resource of [
       "AWS::KMS::Key", "AWS::Cognito::UserPool", "AWS::DynamoDB::Table", "AWS::S3::Bucket",
       "AWS::SQS::Queue", "AWS::StepFunctions::StateMachine", "AWS::ECS::Cluster", "AWS::ECS::Service",
-      "AWS::CloudFront::Distribution", "AWS::WAFv2::WebACL", "AWS::Amplify::App", "AWS::Scheduler::ScheduleGroup",
+      "AWS::CloudFront::Distribution", "AWS::Amplify::App", "AWS::Scheduler::ScheduleGroup",
       "AWS::SNS::Topic", "AWS::CloudWatch::Alarm", "AWS::SecretsManager::Secret",
     ]) expect(template).toContain(`Type: ${resource}`);
     expect(template).not.toContain("Type: AWS::EC2::Instance");
@@ -121,14 +121,17 @@ describe("AWS-native production architecture", () => {
     }
   });
 
-  it("orders the API WAF stage and authorizes every workflow integration", () => {
+  it("uses HTTP API throttling without an invalid WAF REST-stage association and authorizes every workflow integration", () => {
     const template = readFileSync(templatePath, "utf8");
-    const webAclAssociation = cloudFormationResource(template, "ApiWebAclAssociation");
+    const publicApiStage = cloudFormationResource(template, "PublicApiStage");
     const workflowRole = cloudFormationResource(template, "WorkflowRole");
     const dataKey = cloudFormationResource(template, "DataKey");
     const cognitoPolicy = cloudFormationResource(template, "CognitoProvisioningPolicy");
 
-    expect(webAclAssociation).toContain("DependsOn: PublicApiStage");
+    expect(publicApiStage).toContain("ThrottlingBurstLimit: 100");
+    expect(publicApiStage).toContain("ThrottlingRateLimit: 50");
+    expect(template).not.toContain("Type: AWS::WAFv2::WebACLAssociation");
+    expect(template).not.toContain("Type: AWS::WAFv2::WebACL");
     for (const action of [
       "events:DescribeRule",
       "events:PutRule",
