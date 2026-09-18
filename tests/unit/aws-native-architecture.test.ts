@@ -43,6 +43,14 @@ describe("AWS-native production architecture", () => {
     expect(template).not.toMatch(/DeletionPolicy: Retain\r?\n/);
   });
 
+  it("keeps Cognito phone verification settings internally consistent", () => {
+    const template = readFileSync(templatePath, "utf8");
+    const userPool = cloudFormationResource(template, "UserPool");
+
+    expect(userPool).toContain("AutoVerifiedAttributes: [phone_number]");
+    expect(userPool).toContain("AttributesRequireVerificationBeforeUpdate: [phone_number]");
+  });
+
   it("packages three immutable runtimes and isolates finite orchestration work", () => {
     const template = readFileSync(templatePath, "utf8");
     expect(readFileSync(controlPlaneDockerfile, "utf8")).toContain("public.ecr.aws/lambda/nodejs:22");

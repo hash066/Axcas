@@ -254,6 +254,7 @@ Resources:
     Properties:
       UserPoolName: !Sub axcas-${EnvironmentName}
       UsernameAttributes: [phone_number]
+      AutoVerifiedAttributes: [phone_number]
       LambdaConfig:
         DefineAuthChallenge: !GetAtt AuthChallengeFunction.Arn
         CreateAuthChallenge: !GetAtt AuthChallengeFunction.Arn
