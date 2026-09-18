@@ -11,7 +11,7 @@ During the migration, `MigrationAdminOriginUrl` deliberately keeps Hermes' typed
 - private versioned S3 media/site/evidence buckets and CloudFront site delivery
 - Cognito custom authentication with a WhatsApp-delivered code
 - SQS FIFO ingress/campaign queues with DLQs
-- redundant Fargate Hermes/relay/tool-boundary tasks and a finite Strands task definition
+- an opt-in redundant Fargate Hermes/relay/tool-boundary service and a finite Strands task definition
 - Standard Step Functions, Scheduler, CloudWatch alarms, and SNS alerts
 - an Amplify application plus the separately deployed static Studio artifact in `apps/aws-studio`
 
@@ -45,6 +45,12 @@ aws codebuild batch-get-builds --ids <build-id> --region ap-south-1 --query 'bui
 
 The launcher idempotently reuses or creates the three immutable, scan-on-push AES256 ECR repositories and refuses an existing repository with weaker settings. The bootstrap stack creates a dedicated CodeBuild project, its retained 30-day log group, and a dedicated CloudFormation service role. The build role can push only those three repositories, operate only the `axcas-beta-native` stack and its explicitly named change sets, and pass only that service role. The service role has explicit service actions instead of an AWS administrator managed policy. No provider credential is a build input or output.
 
+The first deployment leaves `EnableWorkers=false`. This allows the API, identity, storage, queues,
+workflow definitions, CloudFront and Studio to receive independent acceptance without starting a
+gateway against placeholder provider credentials. After the provider secret is configured, run one
+standalone task acceptance check and update the stack with `EnableWorkers=true`; only then may two
+healthy always-on Hermes tasks be claimed.
+
 The stack initially creates its provider secret with unusable placeholders plus a generated internal service secret. Before any provider acceptance test, replace the placeholder JSON values in the `ProviderSecretArn` output with the real operator-owned Meta/Hermes values. Never paste these into Studio, WhatsApp, source control, CloudFormation parameters, or logs:
 
 - `META_APP_SECRET`
@@ -69,7 +75,7 @@ This reads the public API and Cognito outputs, creates a static bundle from the 
 
 1. Register and OTP-verify `+91 91804 99647` in the Axcas WABA; put its production Phone Number ID and permanent system-user token into Secrets Manager.
 2. Approve `axcas_login_code` and the separate action-required WhatsApp template.
-3. Build and deploy all three images, then confirm two healthy Fargate tasks and Lambda health.
+3. Build and deploy all three images, run one standalone worker task against configured provider secrets, update `EnableWorkers=true`, then confirm two healthy Fargate tasks and Lambda health.
 4. Complete Meta OAuth with a test Instagram Professional account, Page, and merchant-funded Ad Account.
 5. Run the eleven live acceptance checks in the build bible. Record receipts in `EVIDENCE.md`.
 6. Only then change the old Worker to a 30-day redirect and retire the EC2 runtime.

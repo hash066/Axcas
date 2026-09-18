@@ -15,6 +15,11 @@ Parameters:
   HermesImageUri:
     Type: String
     Description: Immutable ECR image digest containing Hermes v0.18.2 at the approved commit.
+  EnableWorkers:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Enable the always-on Hermes service only after provider secrets and a standalone task acceptance check pass.
   WhatsAppNumber:
     Type: String
     Default: '919180499647'
@@ -38,6 +43,7 @@ Parameters:
 
 Conditions:
   HasOperatorAlertEmail: !Not [!Equals [!Ref OperatorAlertEmail, '']]
+  WorkersEnabled: !Equals [!Ref EnableWorkers, 'true']
 
 Resources:
   DataKey:
@@ -595,6 +601,7 @@ Resources:
 
   WorkerService:
     Type: AWS::ECS::Service
+    Condition: WorkersEnabled
     DependsOn: PublicRoute
     Properties:
       Cluster: !Ref Cluster

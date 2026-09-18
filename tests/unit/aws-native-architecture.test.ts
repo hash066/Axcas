@@ -83,6 +83,15 @@ describe("AWS-native production architecture", () => {
     expect(template).not.toContain("AXCAS_PROVIDER_SECRET_JSON");
   });
 
+  it("keeps the always-on Hermes service disabled until provider acceptance", () => {
+    const template = readFileSync(templatePath, "utf8");
+    const workerService = cloudFormationResource(template, "WorkerService");
+
+    expect(template).toContain("EnableWorkers:");
+    expect(template).toContain("WorkersEnabled: !Equals [!Ref EnableWorkers, 'true']");
+    expect(workerService).toContain("Condition: WorkersEnabled");
+  });
+
   it("refuses dirty deploys and runs the same verification gate in CI", () => {
     const deploy = readFileSync(deployScript, "utf8");
     const workflow = readFileSync(productionGate, "utf8");
