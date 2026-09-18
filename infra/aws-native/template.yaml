@@ -45,11 +45,19 @@ Resources:
       KeyPolicy:
         Version: '2012-10-17'
         Statement:
-          - Sid: AccountAdministration
-            Effect: Allow
-            Principal: { AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root' }
-            Action: 'kms:*'
-            Resource: '*'
+           - Sid: AccountAdministration
+             Effect: Allow
+             Principal: { AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root' }
+             Action: 'kms:*'
+             Resource: '*'
+           - Sid: CloudFrontSiteDecryption
+             Effect: Allow
+             Principal: { Service: cloudfront.amazonaws.com }
+             Action: ['kms:Decrypt']
+             Resource: '*'
+             Condition:
+               StringEquals: { 'AWS:SourceAccount': !Ref 'AWS::AccountId' }
+               StringLike: { 'AWS:SourceArn': !Sub 'arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/*' }
 
   DataKeyAlias:
     Type: AWS::KMS::Alias

@@ -27,6 +27,8 @@ describe("AWS-native production architecture", () => {
     expect(template).toContain("FifoQueue: true");
     expect(template).toContain("ContentBasedDeduplication: true");
     expect(template).toContain("SSEAlgorithm: aws:kms");
+    expect(template).toContain("Sid: CloudFrontSiteDecryption");
+    expect(template).toContain("'kms:Decrypt'");
     expect(template).toContain("DeletionPolicy: Retain");
   });
 
@@ -51,8 +53,8 @@ describe("AWS-native production architecture", () => {
     const deploy = readFileSync(deployScript, "utf8");
     const workflow = readFileSync(productionGate, "utf8");
     expect(deploy).toContain("git -C $workspace status --porcelain");
-    expect(deploy).toContain("npm run typecheck");
-    expect(deploy).toContain("npm test");
+    expect(deploy).toContain("mcr.microsoft.com/playwright:v1.57.0-noble");
+    expect(deploy).toContain("npm run typecheck && npm test");
     expect(deploy).toContain("aws cloudformation validate-template");
     expect(workflow).toContain("npm ci");
     expect(workflow).toContain("pipx run cfn-lint infra/aws-native/template.yaml");

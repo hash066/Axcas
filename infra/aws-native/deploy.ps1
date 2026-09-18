@@ -8,7 +8,7 @@ $ErrorActionPreference = 'Stop'
 $workspace = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $template = Join-Path $PSScriptRoot 'template.yaml'
 
-foreach ($commandName in @('aws', 'docker', 'git', 'npm')) {
+foreach ($commandName in @('aws', 'docker', 'git')) {
   if (-not (Get-Command $commandName -ErrorAction SilentlyContinue)) { throw "$commandName is required" }
 }
 
@@ -18,10 +18,8 @@ if ($dirty) { throw 'Refusing to deploy an uncommitted worktree; commit and pass
 
 Push-Location $workspace
 try {
-  npm run typecheck
-  if ($LASTEXITCODE -ne 0) { throw 'TypeScript verification failed' }
-  npm test
-  if ($LASTEXITCODE -ne 0) { throw 'Test verification failed' }
+  docker run --rm --volume "${workspace}:/work" --workdir /work mcr.microsoft.com/playwright:v1.57.0-noble bash -lc "npm ci && npm run typecheck && npm test"
+  if ($LASTEXITCODE -ne 0) { throw 'Containerized production verification failed' }
   aws cloudformation validate-template --template-body "file://$template" --region $Region *> $null
   if ($LASTEXITCODE -ne 0) { throw 'AWS CloudFormation validation failed' }
 } finally {
