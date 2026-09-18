@@ -113,6 +113,7 @@ Resources:
                   - ec2:DisassociateRouteTable
                   - ec2:ModifySubnetAttribute
                   - ec2:ModifyVpcAttribute
+                  - ec2:RevokeSecurityGroupEgress
                   - ecs:CreateCluster
                   - ecs:CreateService
                   - ecs:DeleteCluster

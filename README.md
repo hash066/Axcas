@@ -4,6 +4,8 @@ Axcas turns a small business owner’s voice note, prices, services, photos, and
 
 ## AWS-native production redesign
 
+**Launch marker:** The official production/public build phase began on September 18, 2026. Earlier dated work remains preserved as foundation and private-beta history in `EVIDENCE.md`; this marker does not claim that public acceptance is complete.
+
 The current source is migrating from the Cloudflare/Convex private beta to a separate AWS-native
 stack in `infra/aws-native`. The replacement uses API Gateway/WAF, FIFO SQS, Step Functions,
 redundant ECS Fargate workers, Cognito, DynamoDB, encrypted S3, CloudFront, Amplify,
