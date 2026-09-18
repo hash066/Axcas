@@ -26,8 +26,8 @@ jobs:
         with:
           python-version: '3.12'
       - run: npm ci
+      - run: npx playwright install --with-deps chromium
       - run: npm run typecheck
       - run: npm test
       - run: pipx run cfn-lint infra/aws-native/template.yaml
       - run: git diff --check
-
