@@ -46,6 +46,15 @@ describe("AWS-native CodeBuild deployment bootstrap", () => {
     ]) expect(template).toContain(action);
   });
 
+  it("allows CloudFormation to tag only API Gateway HTTP API stages", () => {
+    const template = readFileSync(bootstrapTemplate, "utf8");
+    expect(template).toContain("Sid: AxcasApiStageTags");
+    expect(template).toContain("- apigateway:TagResource");
+    expect(template).toContain("- apigateway:UntagResource");
+    expect(template).toContain("arn:${AWS::Partition}:apigateway:${AWS::Region}::/apis/*/stages/*");
+    expect(template).not.toContain("apigateway:*");
+  });
+
   it("allows only the AWS-native stack services to initialize encrypted resources", () => {
     const template = readFileSync(bootstrapTemplate, "utf8");
     for (const action of [
