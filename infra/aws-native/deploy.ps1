@@ -8,8 +8,24 @@ $ErrorActionPreference = 'Stop'
 $workspace = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $template = Join-Path $PSScriptRoot 'template.yaml'
 
-foreach ($commandName in @('aws', 'docker', 'git')) {
+foreach ($commandName in @('aws', 'docker', 'git', 'npm', 'uvx')) {
   if (-not (Get-Command $commandName -ErrorAction SilentlyContinue)) { throw "$commandName is required" }
+}
+
+$dirty = git -C $workspace status --porcelain
+if ($LASTEXITCODE -ne 0) { throw 'Git worktree check failed' }
+if ($dirty) { throw 'Refusing to deploy an uncommitted worktree; commit and pass the production gate first' }
+
+Push-Location $workspace
+try {
+  npm run typecheck
+  if ($LASTEXITCODE -ne 0) { throw 'TypeScript verification failed' }
+  npm test
+  if ($LASTEXITCODE -ne 0) { throw 'Test verification failed' }
+  uvx cfn-lint $template
+  if ($LASTEXITCODE -ne 0) { throw 'CloudFormation validation failed' }
+} finally {
+  Pop-Location
 }
 
 $accountId = (aws sts get-caller-identity --query Account --output text --region $Region).Trim()
@@ -65,4 +81,3 @@ aws cloudformation deploy --stack-name "axcas-$EnvironmentName-native" --templat
 if ($LASTEXITCODE -ne 0) { throw 'CloudFormation deployment failed' }
 
 aws cloudformation describe-stacks --stack-name "axcas-$EnvironmentName-native" --region $Region --query 'Stacks[0].Outputs[].{Key:OutputKey,Value:OutputValue}' --output table
-

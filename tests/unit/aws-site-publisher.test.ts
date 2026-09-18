@@ -15,15 +15,17 @@ describe("deterministic AWS site publisher", () => {
   it("writes immutable and current objects only after exact approval and verification", async () => {
     const specHash = await createSiteSpecV3Hash(spec);
     const putObject = vi.fn(async (_input: { key: string; body: string; contentType: "text/html; charset=utf-8"; cacheControl: string; metadata: Record<string, string> }) => ({ versionId: "s3-version-1", etag: "etag-1" }));
+    const registerCurrent = vi.fn(async () => undefined);
     const result = await publishVerifiedSiteV3({
       spec, versionId: "maya-studio-v1", specHash,
       verification: { runId: "verification-maya-v1", specHash, passed: true, blockers: [] },
       approval: { approvalId: "approval-maya-v1", merchantId: "merchant-maya", ownerWaIdHash: "a".repeat(64), scopeHash: specHash, decision: "approved", expiresAt: 1_900_000_000_000 },
       now: 1_800_000_000_000,
       mediaUrl: (assetId) => `https://media.example/${assetId}`,
-      putObject,
+      putObject, registerCurrent,
     });
     expect(putObject.mock.calls.map(([call]) => call.key)).toEqual(["sites/maya-studio/versions/maya-studio-v1/index.html", "s/maya-studio/index.html"]);
+    expect(registerCurrent).toHaveBeenCalledWith(expect.objectContaining({ siteId: "maya-studio", merchantId: "merchant-maya", versionId: "maya-studio-v1", specHash, orderWhatsAppNumber: "+919180499647", offerings: [{ itemId: "custom-blouse", name: "Custom blouse" }] }));
     expect(result).toMatchObject({ siteId: "maya-studio", versionId: "maya-studio-v1", specHash });
   });
 
@@ -34,7 +36,7 @@ describe("deterministic AWS site publisher", () => {
       spec, versionId: "maya-studio-v1", specHash,
       verification: { runId: "verification-maya-v1", specHash: "b".repeat(64), passed: true, blockers: [] },
       approval: { approvalId: "approval-maya-v1", merchantId: "merchant-maya", ownerWaIdHash: "a".repeat(64), scopeHash: specHash, decision: "approved", expiresAt: 1_900_000_000_000 },
-      now: 1_800_000_000_000, mediaUrl: () => "https://media.example/asset", putObject,
+      now: 1_800_000_000_000, mediaUrl: () => "https://media.example/asset", putObject, registerCurrent: vi.fn(),
     })).rejects.toThrow(/verification/i);
     expect(putObject).not.toHaveBeenCalled();
   });

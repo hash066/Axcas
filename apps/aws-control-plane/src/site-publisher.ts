@@ -44,6 +44,15 @@ export async function publishVerifiedSiteV3(input: {
   now: number;
   mediaUrl: (assetId: string) => string;
   putObject: PutObject;
+  registerCurrent: (input: {
+    siteId: string;
+    merchantId: string;
+    versionId: string;
+    specHash: string;
+    businessName: string;
+    orderWhatsAppNumber: string;
+    offerings: Array<{ itemId: string; name: string }>;
+  }) => Promise<void>;
 }): Promise<{ siteId: string; versionId: string; specHash: string; artifactHash: string; immutableObjectVersionId?: string; currentObjectVersionId?: string }> {
   const spec = SiteSpecV3Schema.parse(input.spec);
   if (!/^[a-zA-Z0-9._-]{3,128}$/.test(input.versionId)) throw new Error("release version is invalid");
@@ -65,6 +74,15 @@ export async function publishVerifiedSiteV3(input: {
   const current = await input.putObject({
     key: `s/${spec.siteId}/index.html`, body: html,
     contentType: "text/html; charset=utf-8", cacheControl: "public, max-age=60, must-revalidate", metadata,
+  });
+  await input.registerCurrent({
+    siteId: spec.siteId,
+    merchantId: spec.merchantId,
+    versionId: input.versionId,
+    specHash: actualSpecHash,
+    businessName: spec.business.name,
+    orderWhatsAppNumber: spec.contact.orderWhatsAppNumber,
+    offerings: spec.offerings.map(({ itemId, name }) => ({ itemId, name })),
   });
   return { siteId: spec.siteId, versionId: input.versionId, specHash: actualSpecHash, artifactHash, immutableObjectVersionId: immutable.versionId, currentObjectVersionId: current.versionId };
 }

@@ -5,6 +5,8 @@ const templatePath = new URL("../../infra/aws-native/template.yaml", import.meta
 const controlPlaneDockerfile = new URL("../../infra/aws-native/Dockerfile.control-plane", import.meta.url);
 const workerDockerfile = new URL("../../infra/aws-native/Dockerfile.worker", import.meta.url);
 const hermesDockerfile = new URL("../../infra/aws-native/Dockerfile.hermes", import.meta.url);
+const deployScript = new URL("../../infra/aws-native/deploy.ps1", import.meta.url);
+const productionGate = new URL("../../.github/workflows/production-gate.yml", import.meta.url);
 
 describe("AWS-native production architecture", () => {
   it("contains the production control plane and has no single EC2 host", () => {
@@ -37,7 +39,21 @@ describe("AWS-native production architecture", () => {
     expect(hermes).toContain('org.opencontainers.image.version="0.18.2"');
     expect(hermes).toContain("hermes/plugins/axcas");
     expect(template).toContain("OrchestrationTask:");
+    expect(template).toContain("SitePathRewrite:");
+    expect(template).toContain("SiteSecurityHeaders:");
+    expect(template).toContain("ContentSecurityPolicy: \"default-src 'none'; img-src 'self' https:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'\"");
+    expect(template).toContain("PathPattern: 'r/*'");
     expect(template).toContain("Name: WHATSAPP_CLOUD_ACCESS_TOKEN");
     expect(template).not.toContain("AXCAS_PROVIDER_SECRET_JSON");
+  });
+
+  it("refuses dirty deploys and runs the same verification gate in CI", () => {
+    const deploy = readFileSync(deployScript, "utf8");
+    const workflow = readFileSync(productionGate, "utf8");
+    expect(deploy).toContain("git -C $workspace status --porcelain");
+    expect(deploy).toContain("npm run typecheck");
+    expect(deploy).toContain("npm test");
+    expect(workflow).toContain("npm ci");
+    expect(workflow).toContain("pipx run cfn-lint infra/aws-native/template.yaml");
   });
 });

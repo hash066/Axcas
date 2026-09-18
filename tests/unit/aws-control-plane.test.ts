@@ -68,4 +68,17 @@ describe("AWS-native control-plane ingress", () => {
     expect(response.status).toBe(201);
     expect(beginMediaUpload).toHaveBeenCalledWith({ authSubject: "cognito-sub-123", request: { fileName: "reel.mp4" } });
   });
+
+  it("records same-domain page views and redirects tracked CTAs to an exact WhatsApp message", async () => {
+    const recordPageView = vi.fn(async () => ({ setCookie: "pgsid=session-1; Path=/; Secure; HttpOnly; SameSite=Lax" }));
+    const trackedRedirect = vi.fn(async () => ({ location: "https://wa.me/919876543210?text=Hello%20Maya", setCookie: undefined }));
+    const app = createAwsControlPlaneApp({ metaAppSecret: "app-secret", metaVerifyToken: "verify-secret", enqueue: vi.fn(), resolveApproval: vi.fn(), recordPageView, trackedRedirect });
+    const view = await app.request("/e/view/maya-studio?source=site");
+    expect(view.status).toBe(204);
+    expect(view.headers.get("set-cookie")).toContain("pgsid=");
+    const click = await app.request("/r/whatsapp/maya-studio/custom-blouse?source=site&campaign=launch");
+    expect(click.status).toBe(302);
+    expect(click.headers.get("location")).toBe("https://wa.me/919876543210?text=Hello%20Maya");
+    expect(trackedRedirect).toHaveBeenCalledWith(expect.objectContaining({ siteId: "maya-studio", itemId: "custom-blouse", source: "site", campaign: "launch" }));
+  });
 });

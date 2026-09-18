@@ -20,6 +20,7 @@ describe("SiteSpec V3 renderer", () => {
     expect(html).toContain('data-pg="site-v3"');
     expect(html).toContain('data-pg="offering-custom-blouse"');
     expect(html).toContain('/r/whatsapp/maya-studio/custom-blouse?source=site');
+    expect(html).toContain('/e/view/maya-studio?source=site');
     expect(html).toContain("₹1,500");
     expect(html).toContain("https://media.example/asset-maya-hero");
   });

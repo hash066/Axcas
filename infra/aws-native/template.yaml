@@ -285,6 +285,55 @@ Resources:
         SigningBehavior: always
         SigningProtocol: sigv4
 
+  SitePathRewrite:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub axcas-${EnvironmentName}-site-path-rewrite
+      AutoPublish: true
+      FunctionConfig: { Comment: Resolve /s/site-slug to its immutable renderer entrypoint, Runtime: cloudfront-js-2.0 }
+      FunctionCode: |
+        function handler(event) {
+          var request = event.request;
+          if (/^\/s\/[a-z0-9][a-z0-9-]{2,63}\/?$/.test(request.uri)) {
+            if (request.uri.charAt(request.uri.length - 1) !== '/') request.uri += '/';
+            request.uri += 'index.html';
+          }
+          return request;
+        }
+
+  DynamicRouteCachePolicy:
+    Type: AWS::CloudFront::CachePolicy
+    Properties:
+      CachePolicyConfig:
+        Name: !Sub axcas-${EnvironmentName}-dynamic-routes
+        DefaultTTL: 0
+        MaxTTL: 0
+        MinTTL: 0
+        ParametersInCacheKeyAndForwardedToOrigin:
+          EnableAcceptEncodingBrotli: false
+          EnableAcceptEncodingGzip: false
+          HeadersConfig: { HeaderBehavior: none }
+          CookiesConfig: { CookieBehavior: whitelist, Cookies: [pgsid] }
+          QueryStringsConfig: { QueryStringBehavior: whitelist, QueryStrings: [source, campaign] }
+
+  SiteSecurityHeaders:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub axcas-${EnvironmentName}-site-security
+        SecurityHeadersConfig:
+          ContentSecurityPolicy:
+            ContentSecurityPolicy: "default-src 'none'; img-src 'self' https:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+            Override: true
+          ContentTypeOptions: { Override: true }
+          FrameOptions: { FrameOption: DENY, Override: true }
+          ReferrerPolicy: { ReferrerPolicy: strict-origin-when-cross-origin, Override: true }
+          StrictTransportSecurity: { AccessControlMaxAgeSec: 63072000, IncludeSubdomains: true, Preload: true, Override: true }
+          XSSProtection: { Protection: true, ModeBlock: true, Override: true }
+        CustomHeadersConfig:
+          Items:
+            - { Header: Permissions-Policy, Value: 'camera=(), microphone=(), geolocation=()', Override: true }
+
   SitesDistribution:
     Type: AWS::CloudFront::Distribution
     Properties:
@@ -298,6 +347,9 @@ Resources:
             DomainName: !GetAtt SitesBucket.RegionalDomainName
             OriginAccessControlId: !GetAtt OriginAccessControl.Id
             S3OriginConfig: { OriginAccessIdentity: '' }
+          - Id: api
+            DomainName: !Sub '${PublicApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}'
+            CustomOriginConfig: { OriginProtocolPolicy: https-only, OriginSSLProtocols: [TLSv1.2] }
         DefaultCacheBehavior:
           TargetOriginId: sites
           ViewerProtocolPolicy: redirect-to-https
@@ -305,6 +357,24 @@ Resources:
           AllowedMethods: [GET, HEAD, OPTIONS]
           CachedMethods: [GET, HEAD, OPTIONS]
           CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          ResponseHeadersPolicyId: !Ref SiteSecurityHeaders
+          FunctionAssociations:
+            - { EventType: viewer-request, FunctionARN: !GetAtt SitePathRewrite.FunctionARN }
+        CacheBehaviors:
+          - PathPattern: 'r/*'
+            TargetOriginId: api
+            ViewerProtocolPolicy: redirect-to-https
+            Compress: false
+            AllowedMethods: [GET, HEAD, OPTIONS]
+            CachedMethods: [GET, HEAD, OPTIONS]
+            CachePolicyId: !Ref DynamicRouteCachePolicy
+          - PathPattern: 'e/*'
+            TargetOriginId: api
+            ViewerProtocolPolicy: redirect-to-https
+            Compress: false
+            AllowedMethods: [GET, HEAD, OPTIONS]
+            CachedMethods: [GET, HEAD, OPTIONS]
+            CachePolicyId: !Ref DynamicRouteCachePolicy
         CustomErrorResponses:
           - { ErrorCode: 403, ResponseCode: 404, ResponsePagePath: /404.html, ErrorCachingMinTTL: 30 }
 

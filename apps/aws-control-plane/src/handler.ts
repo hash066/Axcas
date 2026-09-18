@@ -48,12 +48,59 @@ function identityHash(value: string, secret: string): string {
   return createHmac("sha256", secret).update(value).digest("hex");
 }
 
+function firstPartySession(cookieHeader: string | undefined): { id: string; setCookie?: string } {
+  const existing = cookieHeader?.match(/(?:^|;\s*)pgsid=([A-Za-z0-9_-]{20,128})(?:;|$)/)?.[1];
+  if (existing) return { id: existing };
+  const id = randomUUID();
+  return { id, setCookie: `pgsid=${id}; Path=/; Max-Age=31536000; Secure; HttpOnly; SameSite=Lax` };
+}
+
 async function dependencies(): Promise<AwsControlPlaneDependencies> {
   const config = await providerSecret();
   const queueUrl = process.env.AXCAS_INGRESS_QUEUE_URL;
   const tableName = process.env.AXCAS_STATE_TABLE;
+  const ledgerTable = process.env.AXCAS_LEDGER_TABLE;
   const assetsBucket = process.env.AXCAS_ASSETS_BUCKET;
-  if (!queueUrl || !tableName || !config.META_APP_SECRET || !config.META_VERIFY_TOKEN || !config.PROOFGATE_SERVICE_SECRET) throw new Error("control plane is not configured");
+  if (!queueUrl || !tableName || !ledgerTable || !config.META_APP_SECRET || !config.META_VERIFY_TOKEN || !config.PROOFGATE_SERVICE_SECRET) throw new Error("control plane is not configured");
+  const currentSite = async (siteId: string) => {
+    const response = await dynamo.send(new GetCommand({ TableName: tableName, Key: { pk: `SITE#${siteId}`, sk: "CURRENT" }, ConsistentRead: true }));
+    const item = response.Item as { merchantId?: string; versionId?: string; specHash?: string; businessName?: string; orderWhatsAppNumber?: string; offerings?: Array<{ itemId?: string; name?: string }> } | undefined;
+    if (!item?.merchantId || !item.versionId || !/^[a-f0-9]{64}$/.test(item.specHash ?? "") || !item.businessName || !/^\+?\d{8,15}$/.test(item.orderWhatsAppNumber ?? "")) throw new Error("published site was not found");
+    return { ...item, specHash: item.specHash!, orderWhatsAppNumber: item.orderWhatsAppNumber!, offerings: item.offerings ?? [] };
+  };
+  const recordSiteEvent = async (input: { type: "page_view" | "cta_click"; siteId: string; itemId?: string; source: string; campaign?: string; cookie?: string }) => {
+    const site = await currentSite(input.siteId);
+    const session = firstPartySession(input.cookie);
+    const sessionIdHash = identityHash(session.id, config.PROOFGATE_SERVICE_SECRET);
+    const now = Date.now();
+    const campaignKey = input.campaign ?? "none";
+    const dedupe = input.type === "page_view"
+      ? `VIEW#${site.versionId}#${campaignKey}#${sessionIdHash}`
+      : `CTA#${site.versionId}#${input.itemId ?? "general"}#${campaignKey}#${sessionIdHash}#${Math.floor(now / 60_000)}`;
+    try {
+      await dynamo.send(new PutCommand({
+        TableName: ledgerTable,
+        Item: {
+          pk: `SITE#${input.siteId}`,
+          sk: `EVENT#${dedupe}`,
+          eventType: input.type,
+          siteId: input.siteId,
+          merchantId: site.merchantId,
+          versionId: site.versionId,
+          specHash: site.specHash,
+          itemId: input.itemId,
+          source: input.source,
+          campaign: input.campaign,
+          sessionIdHash,
+          occurredAt: now,
+        },
+        ConditionExpression: "attribute_not_exists(pk) AND attribute_not_exists(sk)",
+      }));
+    } catch (error) {
+      if ((error as { name?: string }).name !== "ConditionalCheckFailedException") throw error;
+    }
+    return { site, setCookie: session.setCookie };
+  };
   const merchantForSubject = async (authSubject: string): Promise<string> => {
     const identity = await dynamo.send(new GetCommand({ TableName: tableName, Key: { pk: `IDENTITY#${authSubject}`, sk: "PROFILE" }, ConsistentRead: true }));
     const merchantId = (identity.Item as { merchantId?: string } | undefined)?.merchantId;
@@ -70,6 +117,20 @@ async function dependencies(): Promise<AwsControlPlaneDependencies> {
   return {
     metaAppSecret: config.META_APP_SECRET,
     metaVerifyToken: config.META_VERIFY_TOKEN,
+    recordPageView: async (input) => {
+      const result = await recordSiteEvent({ type: "page_view", ...input });
+      return { setCookie: result.setCookie };
+    },
+    trackedRedirect: async (input) => {
+      const result = await recordSiteEvent({ type: "cta_click", ...input });
+      const offering = input.itemId === "general" ? undefined : result.site.offerings.find((candidate) => candidate.itemId === input.itemId);
+      if (input.itemId !== "general" && (!offering?.itemId || !offering.name)) throw new Error("published offering was not found");
+      const message = offering
+        ? `Hello ${result.site.businessName}, I'd like to enquire about ${offering.name}.`
+        : `Hello ${result.site.businessName}, I found you on your website and would like to know more.`;
+      const number = result.site.orderWhatsAppNumber.replace(/\D/g, "");
+      return { location: `https://wa.me/${number}?text=${encodeURIComponent(message)}`, setCookie: result.setCookie };
+    },
     enqueue: async (message) => {
       const ownerWaIdHash = identityHash(message.senderWaId, config.PROOFGATE_SERVICE_SECRET);
       const merchantId = `merchant-${ownerWaIdHash.slice(0, 20)}`;

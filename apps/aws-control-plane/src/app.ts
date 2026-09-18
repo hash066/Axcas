@@ -20,6 +20,8 @@ export type AwsControlPlaneDependencies = {
   beginMediaUpload?: (input: { authSubject: string; request: unknown }) => Promise<Record<string, unknown>>;
   signMediaPart?: (input: { authSubject: string; assetId: string; request: unknown }) => Promise<Record<string, unknown>>;
   completeMediaUpload?: (input: { authSubject: string; assetId: string; request: unknown }) => Promise<Record<string, unknown>>;
+  recordPageView?: (input: { siteId: string; source: string; campaign?: string; cookie?: string }) => Promise<{ setCookie?: string }>;
+  trackedRedirect?: (input: { siteId: string; itemId: string; source: string; campaign?: string; cookie?: string }) => Promise<{ location: string; setCookie?: string }>;
   now?: () => number;
 };
 
@@ -48,6 +50,29 @@ export function createAwsControlPlaneApp(dependencies: AwsControlPlaneDependenci
   const app = new Hono();
 
   app.get("/health", (context) => context.json({ status: "ok" }, 200, { "cache-control": "no-store" }));
+
+  app.get("/e/view/:siteId", async (context) => {
+    const siteId = context.req.param("siteId");
+    const source = context.req.query("source") ?? "site";
+    const campaign = context.req.query("campaign");
+    if (!/^[a-z0-9][a-z0-9-]{2,63}$/.test(siteId) || !/^[A-Za-z0-9_-]{1,64}$/.test(source) || (campaign && !/^[A-Za-z0-9_-]{1,128}$/.test(campaign))) return context.body(null, 404);
+    if (!dependencies.recordPageView) return context.body(null, 503, { "cache-control": "no-store" });
+    const result = await dependencies.recordPageView({ siteId, source, campaign, cookie: context.req.header("cookie") });
+    return context.body(null, 204, { "cache-control": "no-store", ...(result.setCookie ? { "set-cookie": result.setCookie } : {}) });
+  });
+
+  app.get("/r/whatsapp/:siteId/:itemId", async (context) => {
+    const siteId = context.req.param("siteId");
+    const itemId = context.req.param("itemId");
+    const source = context.req.query("source") ?? "site";
+    const campaign = context.req.query("campaign");
+    if (!/^[a-z0-9][a-z0-9-]{2,63}$/.test(siteId) || !/^[a-z0-9][a-z0-9-]{2,63}$/.test(itemId) || !/^[A-Za-z0-9_-]{1,64}$/.test(source) || (campaign && !/^[A-Za-z0-9_-]{1,128}$/.test(campaign))) return context.json({ error: "not_found" }, 404, { "cache-control": "no-store" });
+    if (!dependencies.trackedRedirect) return context.json({ error: "temporarily_unavailable" }, 503, { "cache-control": "no-store" });
+    const result = await dependencies.trackedRedirect({ siteId, itemId, source, campaign, cookie: context.req.header("cookie") });
+    const target = new URL(result.location);
+    if (target.protocol !== "https:" || target.hostname !== "wa.me" || !/^\/\d{8,15}$/.test(target.pathname)) throw new Error("invalid tracked redirect target");
+    return new Response(null, { status: 302, headers: { location: target.toString(), "cache-control": "no-store", ...(result.setCookie ? { "set-cookie": result.setCookie } : {}) } });
+  });
 
   app.get("/oauth/meta/start", async (context) => {
     const authSubject = context.req.header("x-axcas-auth-sub") ?? "";
