@@ -5,11 +5,15 @@
   "type": "module",
   "workspaces": [
     "apps/*",
+    "!apps/axcas-mobile",
     "packages/*"
   ],
   "overrides": {
+    "fast-uri": "3.1.6",
+    "js-yaml": "4.3.2",
     "nanoid": "3.3.18",
-    "postcss": "8.5.26"
+    "postcss": "8.5.26",
+    "sharp": "0.35.4"
   },
   "scripts": {
     "demo": "tsx scripts/demo-loop.mjs",
@@ -19,7 +23,8 @@
     "reel:render": "tsx scripts/render-reel.mjs",
     "reel:template:render": "npm run render --workspace=@axcas/reel-template-worker --",
     "acceptance:preflight": "node --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/acceptance-preflight.mjs",
-    "aws:deploy": "powershell -NoProfile -ExecutionPolicy Bypass -File infra/aws/deploy.ps1",
+    "aws:deploy": "powershell -NoProfile -ExecutionPolicy Bypass -File infra/aws-native/deploy.ps1",
+    "aws:deploy:legacy": "powershell -NoProfile -ExecutionPolicy Bypass -File infra/aws/deploy.ps1",
     "start": "node src/server.js",
     "dev:edge": "wrangler dev --config apps/edge-runtime/wrangler.jsonc",
     "deploy:spike-a": "wrangler deploy --config apps/edge-runtime/wrangler.jsonc --temporary",
@@ -30,24 +35,35 @@
     "test:hermes-plugin": "python tests/hermes_plugin_test.py",
     "test:aws-media": "python tests/aws_merchant_media_lambda_test.py",
     "test": "npm run test:legacy && npm run test:unit && npm run test:hermes-plugin && npm run test:aws-media",
-    "typecheck": "tsc --noEmit && npm run typecheck --workspace=@axcas/reel-template-worker && npm run typecheck --workspace=@axcas/mobile"
+    "typecheck": "tsc --noEmit && npm run typecheck --workspace=@axcas/reel-template-worker"
   },
   "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1109.0",
+    "@aws-sdk/client-kms": "^3.1109.0",
     "@aws-sdk/client-polly": "^3.1104.0",
+    "@aws-sdk/client-s3": "^3.1109.0",
     "@aws-sdk/client-secrets-manager": "^3.1109.0",
     "@aws-sdk/client-sqs": "^3.1109.0",
+    "@aws-sdk/client-sfn": "^3.1109.0",
+    "@aws-sdk/lib-dynamodb": "^3.1109.0",
+    "@aws-sdk/s3-request-presigner": "^3.1109.0",
+    "@opentelemetry/api": "^1.9.0",
     "convex": "^1.42.1",
-    "hono": "^4.13.1",
+    "hono": "^4.13.8",
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "5.20260815.1",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@cloudflare/workers-types": "5.20260918.1",
     "@playwright/test": "^1.57.0",
     "@types/node": "^26.1.1",
+    "esbuild": "^0.28.2",
+    "fast-uri": "3.1.6",
+    "js-yaml": "4.3.2",
     "jsdom": "^29.1.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
-    "vitest": "^4.0.16",
-    "wrangler": "^4.124.0"
+    "vitest": "^4.1.11",
+    "wrangler": "^4.134.0"
   }
 }

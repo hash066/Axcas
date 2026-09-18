@@ -1,11 +1,57 @@
 # ProofGate Build Bible
 
-Status: amended final build specification
+Status: AWS-native production redesign in implementation; external acceptance incomplete
 Primary track: AI as Agency  
 Product category: self-verifying launch agency  
 MVP vertical: one-page workshop, event, booking, or lead page  
 Primary operator surface: WhatsApp Business Cloud through Hermes
-Build window: eight hours  
+Build window: continuous production hardening
+
+## 2026-09-18 approved AWS-native production amendment
+
+Axcas is India-first and uses production number `+91 91804 99647` after that unused SIM is
+registered and OTP-verified in the Axcas WABA. Until Meta returns a production Phone Number ID
+and an unallowlisted second-phone test succeeds, the number is configuration intent rather than
+live evidence. Customers never provide provider API keys. They connect their own Instagram
+Professional account, Facebook Page, and optional Ad Account through one server-side Meta OAuth
+flow; Axcas stores only a KMS-encrypted token reference in durable product state.
+
+The replacement control plane is AWS-native: API Gateway/WAF verifies public ingress, FIFO SQS
+absorbs WhatsApp and campaign work, Step Functions owns durable workflow transitions, redundant
+Fargate tasks run Hermes/Strands/FFmpeg, and deterministic Lambdas retain verification, approval,
+release, rollback, posting, and spend authority. DynamoDB separates mutable tenant state from the
+append-only ledger. KMS-encrypted S3 stores private assets, versioned static sites, renders, and
+evidence; CloudFront serves published sites, Amplify serves Studio, Cognito provides WhatsApp-
+backed passwordless identity, EventBridge schedules measurements, and CloudWatch/SNS report
+operational failures. The existing Cloudflare/Convex service remains unchanged until this stack
+passes acceptance and must not be called migrated before then.
+
+`SiteSpecV3` adds structured section order and theme/layout tokens while preserving the rule that
+agents never generate or patch page code. A deterministic renderer writes one immutable versioned
+artifact and one S3-versioned current alias only after an independent verification receipt and an
+authenticated exact-hash release approval agree. Studio remains a structured visual editor over
+the same project revision stream, not a blank-canvas code editor.
+
+Reel campaigns contain exactly three supplied-media variants testing hook, cover, and CTA. Drafting
+and preview generation are reversible. One campaign approval binds the exact assets, captions,
+schedule, target area, duration, placements, and optional INR 300–2,000 merchant-funded spend cap.
+That approval may authorize deterministic scheduled publication and measurement; it never permits
+unbounded autonomous posting. Instagram Trial Reels are enabled only after the connected account
+passes an official provider capability test. Otherwise Axcas reports the limitation and publishes
+a normal Reel if that was approved.
+
+Paid campaigns are restricted to non-sensitive India beta businesses, adults 18+, a merchant-
+selected 5–25 km area, automatic placements, and a three-day lifetime budget. Provider resources
+are created paused. Deterministic code activates them only after approval and stops at the bound
+ceiling. Raw organic/paid denominators are stored before scoring. A tenant-specific learning
+artifact requires three adequate comparable variants; insufficient evidence never produces a
+winner. The next draft may use the prior result with 10–20% exploration but requires a new approval
+before any further post or spend.
+
+The free beta provides one site, three Reel previews, one final organic/eligible Trial Reel post,
+and one optional merchant-funded paid experiment under enforced usage quotas. Vapi remains disabled
+for ordinary beta merchants until live recording-consent yes/no and do-not-call paths pass and
+India calling readiness is independently cleared.
 
 ## 2026-08-18 approved Product Hunt scope amendment
 

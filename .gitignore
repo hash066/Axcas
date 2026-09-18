@@ -30,3 +30,5 @@ Thumbs.db
 # Evidence artifacts too large for git (reference them in EVIDENCE.md instead)
 evidence/screenshots/raw/
 *.mp4
+/output/
+/tmp/

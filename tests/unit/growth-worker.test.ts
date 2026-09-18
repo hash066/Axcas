@@ -288,12 +288,12 @@ describe("growth Worker", () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ intent: "both" }),
-    }, { AXCAS_WHATSAPP_NUMBER: "15556537153" } as never);
+    }, { AXCAS_WHATSAPP_NUMBER: "919180499647" } as never);
     expect(response.status).toBe(201);
     expect(response.headers.get("set-cookie")).toContain("axcas_link=");
     expect(response.headers.get("set-cookie")).toContain("HttpOnly");
     const body = await response.json() as Record<string, unknown>;
-    expect(body.whatsappUrl).toMatch(/^https:\/\/wa\.me\/15556537153\?text=AXCAS%20LINK%20[A-Z0-9]+$/);
+    expect(body.whatsappUrl).toMatch(/^https:\/\/wa\.me\/919180499647\?text=AXCAS%20LINK%20[A-Z0-9]+$/);
     expect(body).not.toHaveProperty("browserNonce");
     expect(admin.createStudioLink).toHaveBeenCalledWith(expect.objectContaining({
       linkId: expect.stringMatching(/^link-/),
@@ -547,11 +547,13 @@ describe("growth Worker", () => {
     expect(html).toContain("Axcas agent");
     expect(html).toContain("Start in WhatsApp for speed");
     expect(html).toContain('data-pg="start-whatsapp"');
-    expect(html).toContain('href="https://wa.me/15556537153?text=START%20AXCAS"');
+    expect(html).toContain('href="https://wa.me/919180499647?text=START%20AXCAS"');
     expect(html).toContain("Photos + offerings + voice note");
     expect(html).toContain("Private beta");
+    expect(html).toContain("Source-verified foundation:");
+    expect(html).not.toContain("Working:  WhatsApp intake");
     expect(html).toContain("Hosting, storage, and safety checks are active");
-    expect(html).toContain("New WhatsApp users open after final agent acceptance");
+    expect(html).toContain("Production-number OTP, Meta app review");
     expect(html).not.toContain("AWS-hosted Hermes is live");
     expect(html).not.toContain("durable Hermes hosting");
     expect(html).toContain("For small businesses");

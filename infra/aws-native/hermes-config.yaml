@@ -1,0 +1,14 @@
+plugins:
+  enabled:
+    - axcas
+platform_toolsets:
+  whatsapp_cloud:
+    - axcas
+agent:
+  disabled_toolsets:
+    - terminal
+    - web
+    - browser
+    - computer
+    - code_execution
+    - filesystem

@@ -27,7 +27,7 @@ export function renderProductHome(): string {
         <div class="eyebrow">For small businesses</div>
         <h1>Websites and reels, without the agency maze.</h1>
         <p class="lead">Start in WhatsApp for speed or use Axcas Studio for visual control. Your business details, real media, hosting, storage and feedback loop stay in one service.</p>
-        <div class="actions"><a class="button primary" data-pg="start-whatsapp" href="https://wa.me/15556537153?text=START%20AXCAS" rel="noopener noreferrer">Start in WhatsApp</a><a class="button secondary" data-pg="start-studio" href="/studio">Open Axcas Studio</a><a class="button secondary" data-pg="judge-demo" href="/demo">View judge sandbox</a></div>
+        <div class="actions"><a class="button primary" data-pg="start-whatsapp" href="https://wa.me/919180499647?text=START%20AXCAS" rel="noopener noreferrer">Start in WhatsApp</a><a class="button secondary" data-pg="start-studio" href="/studio">Open Axcas Studio</a><a class="button secondary" data-pg="judge-demo" href="/demo">View judge sandbox</a></div>
         <p class="micro">Tailors · tutors · salons · home services · retailers · bakeries · and more</p>
       </div>
       <div class="phone" aria-label="Demo WhatsApp conversation">
@@ -66,10 +66,10 @@ export function renderProductHome(): string {
       <div class="truth">
         <div><h2>Demo journey — not live merchant proof.</h2><p>This page shows the customer experience. A real merchant site is published only after their own content passes verification and they approve it.</p></div>
         <div class="checks">
-          <div class="check"><strong>Working:</strong> WhatsApp intake, tenant isolation, catalog generation, verification, approvals, tracked CTAs, metrics, reel pipeline.</div>
-          <div class="check"><strong>Private-beta foundation:</strong> Hosting, storage, and safety checks are active. New WhatsApp users open after final agent acceptance.</div>
-          <div class="check"><strong>Controlled beta:</strong> Meta-approved test recipients can complete the WhatsApp flow while production access is completed.</div>
-          <div class="check"><strong>Still gated:</strong> Meta production-number access, one real merchant-media reel, and consented Vapi call acceptance.</div>
+          <div class="check"><strong>Source-verified foundation:</strong> Intake, tenant isolation, candidate verification, exact approvals, tracked CTAs, Reel rendering contracts, and the AWS replacement stack have automated evidence.</div>
+          <div class="check"><strong>Private-beta foundation:</strong> Hosting, storage, and safety checks are active on the current service while the AWS-native replacement completes acceptance.</div>
+          <div class="check"><strong>Not production proof:</strong> Sample conversations, synthetic metrics, and local renders are never counted as merchant outcomes.</div>
+          <div class="check"><strong>Still gated:</strong> Production-number OTP, Meta app review, one real published merchant site, one real merchant-media Reel, and one capped paid experiment.</div>
         </div>
       </div>
     </section>

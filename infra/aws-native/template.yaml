@@ -1,0 +1,776 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Axcas AWS-native India beta control plane, media plane, Studio, and audited campaign workflows.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: beta
+    AllowedPattern: '^[a-z][a-z0-9-]{1,15}$'
+  ControlPlaneImageUri:
+    Type: String
+    Description: Immutable ECR image digest for the Axcas Lambda control plane.
+  WorkerImageUri:
+    Type: String
+    Description: Immutable ECR image digest for relay, Strands bridge, and FFmpeg workers.
+  HermesImageUri:
+    Type: String
+    Description: Immutable ECR image digest containing Hermes v0.18.2 at the approved commit.
+  WhatsAppNumber:
+    Type: String
+    Default: '919180499647'
+    AllowedPattern: '^91[6-9][0-9]{9}$'
+  OperatorAlertEmail:
+    Type: String
+    Default: ''
+  MetaGraphApiVersion:
+    Type: String
+    Default: v26.0
+  MigrationAdminOriginUrl:
+    Type: String
+    Default: https://proofgate-whatsapp-growth.proofgate-harshita.workers.dev
+    AllowedPattern: '^https://[A-Za-z0-9.-]+(?:\.workers\.dev|\.execute-api\.[a-z0-9-]+\.amazonaws\.com)$'
+    Description: Existing typed ProofGate command boundary retained until AWS parity acceptance; change only through a reviewed stack update.
+
+Conditions:
+  HasOperatorAlertEmail: !Not [!Equals [!Ref OperatorAlertEmail, '']]
+
+Resources:
+  DataKey:
+    Type: AWS::KMS::Key
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: Axcas tenant data, media, evidence, and provider-token encryption
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AccountAdministration
+            Effect: Allow
+            Principal: { AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root' }
+            Action: 'kms:*'
+            Resource: '*'
+
+  DataKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub alias/axcas-${EnvironmentName}
+      TargetKeyId: !Ref DataKey
+
+  StateTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      TableName: !Sub axcas-${EnvironmentName}-state
+      AttributeDefinitions:
+        - { AttributeName: pk, AttributeType: S }
+        - { AttributeName: sk, AttributeType: S }
+        - { AttributeName: gsi1pk, AttributeType: S }
+        - { AttributeName: gsi1sk, AttributeType: S }
+      KeySchema:
+        - { AttributeName: pk, KeyType: HASH }
+        - { AttributeName: sk, KeyType: RANGE }
+      GlobalSecondaryIndexes:
+        - IndexName: gsi1
+          KeySchema:
+            - { AttributeName: gsi1pk, KeyType: HASH }
+            - { AttributeName: gsi1sk, KeyType: RANGE }
+          Projection: { ProjectionType: ALL }
+      PointInTimeRecoverySpecification: { PointInTimeRecoveryEnabled: true }
+      SSESpecification: { SSEEnabled: true, SSEType: KMS, KMSMasterKeyId: !Ref DataKey }
+      StreamSpecification: { StreamViewType: NEW_AND_OLD_IMAGES }
+
+  LedgerTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      TableName: !Sub axcas-${EnvironmentName}-ledger
+      AttributeDefinitions:
+        - { AttributeName: pk, AttributeType: S }
+        - { AttributeName: sk, AttributeType: S }
+      KeySchema:
+        - { AttributeName: pk, KeyType: HASH }
+        - { AttributeName: sk, KeyType: RANGE }
+      PointInTimeRecoverySpecification: { PointInTimeRecoveryEnabled: true }
+      SSESpecification: { SSEEnabled: true, SSEType: KMS, KMSMasterKeyId: !Ref DataKey }
+
+  AssetsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: aws:kms, KMSMasterKeyID: !Ref DataKey }
+            BucketKeyEnabled: true
+      VersioningConfiguration: { Status: Enabled }
+      PublicAccessBlockConfiguration: { BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true }
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteRenderIntermediates
+            Status: Enabled
+            Prefix: render-intermediate/
+            ExpirationInDays: 7
+          - Id: DeleteConsentedCallRecordings
+            Status: Enabled
+            Prefix: call-recordings/
+            ExpirationInDays: 30
+      CorsConfiguration:
+        CorsRules:
+          - AllowedMethods: [PUT]
+            AllowedOrigins: ['*']
+            AllowedHeaders: ['content-type', 'x-amz-checksum-sha256']
+            MaxAge: 300
+
+  SitesBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: aws:kms, KMSMasterKeyID: !Ref DataKey }
+            BucketKeyEnabled: true
+      VersioningConfiguration: { Status: Enabled }
+      PublicAccessBlockConfiguration: { BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true }
+
+  EvidenceBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: aws:kms, KMSMasterKeyID: !Ref DataKey }
+            BucketKeyEnabled: true
+      VersioningConfiguration: { Status: Enabled }
+      ObjectLockEnabled: true
+      ObjectLockConfiguration:
+        ObjectLockEnabled: Enabled
+        Rule: { DefaultRetention: { Mode: GOVERNANCE, Days: 90 } }
+      PublicAccessBlockConfiguration: { BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true }
+
+  IngressDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub axcas-${EnvironmentName}-ingress-dlq.fifo
+      FifoQueue: true
+      ContentBasedDeduplication: true
+      KmsMasterKeyId: !Ref DataKey
+      MessageRetentionPeriod: 1209600
+
+  IngressQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub axcas-${EnvironmentName}-ingress.fifo
+      FifoQueue: true
+      ContentBasedDeduplication: true
+      KmsMasterKeyId: !Ref DataKey
+      VisibilityTimeout: 300
+      RedrivePolicy: { deadLetterTargetArn: !GetAtt IngressDeadLetterQueue.Arn, maxReceiveCount: 5 }
+
+  CampaignDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub axcas-${EnvironmentName}-campaign-dlq.fifo
+      FifoQueue: true
+      ContentBasedDeduplication: true
+      KmsMasterKeyId: !Ref DataKey
+      MessageRetentionPeriod: 1209600
+
+  CampaignQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub axcas-${EnvironmentName}-campaign.fifo
+      FifoQueue: true
+      ContentBasedDeduplication: true
+      KmsMasterKeyId: !Ref DataKey
+      VisibilityTimeout: 900
+      RedrivePolicy: { deadLetterTargetArn: !GetAtt CampaignDeadLetterQueue.Arn, maxReceiveCount: 4 }
+
+  MediaVerificationDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub axcas-${EnvironmentName}-media-verification-dlq.fifo
+      FifoQueue: true
+      ContentBasedDeduplication: true
+      KmsMasterKeyId: !Ref DataKey
+      MessageRetentionPeriod: 1209600
+
+  MediaVerificationQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub axcas-${EnvironmentName}-media-verification.fifo
+      FifoQueue: true
+      ContentBasedDeduplication: true
+      KmsMasterKeyId: !Ref DataKey
+      VisibilityTimeout: 900
+      RedrivePolicy: { deadLetterTargetArn: !GetAtt MediaVerificationDeadLetterQueue.Arn, maxReceiveCount: 4 }
+
+  ProviderSecrets:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Name: !Sub axcas/${EnvironmentName}/providers
+      KmsKeyId: !Ref DataKey
+      Description: Operator-managed Meta, Bedrock boundary, Vapi, and service credentials; never merchant-visible
+      GenerateSecretString:
+        SecretStringTemplate: '{"META_APP_SECRET":"replace-before-provider-acceptance","META_VERIFY_TOKEN":"replace-before-provider-acceptance","WHATSAPP_CLOUD_PHONE_NUMBER_ID":"replace-before-provider-acceptance","WHATSAPP_CLOUD_ACCESS_TOKEN":"replace-before-provider-acceptance","WHATSAPP_CLOUD_APP_ID":"replace-before-provider-acceptance","WHATSAPP_CLOUD_WABA_ID":"replace-before-provider-acceptance","OPENROUTER_API_KEY":"replace-before-provider-acceptance"}'
+        GenerateStringKey: PROOFGATE_SERVICE_SECRET
+        PasswordLength: 64
+        ExcludePunctuation: true
+
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    DependsOn: AuthChallengeInvokePermission
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      UserPoolName: !Sub axcas-${EnvironmentName}
+      UsernameAttributes: [phone_number]
+      LambdaConfig:
+        DefineAuthChallenge: !GetAtt AuthChallengeFunction.Arn
+        CreateAuthChallenge: !GetAtt AuthChallengeFunction.Arn
+        VerifyAuthChallengeResponse: !GetAtt AuthChallengeFunction.Arn
+      MfaConfiguration: 'OFF'
+      Policies:
+        PasswordPolicy: { MinimumLength: 20, RequireLowercase: true, RequireNumbers: true, RequireSymbols: true, RequireUppercase: true, TemporaryPasswordValidityDays: 1 }
+      UserPoolAddOns: { AdvancedSecurityMode: ENFORCED }
+      UserAttributeUpdateSettings: { AttributesRequireVerificationBeforeUpdate: [phone_number] }
+
+  StudioClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub axcas-${EnvironmentName}-studio
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      PreventUserExistenceErrors: ENABLED
+      ExplicitAuthFlows: [ALLOW_CUSTOM_AUTH, ALLOW_REFRESH_TOKEN_AUTH]
+      AccessTokenValidity: 15
+      IdTokenValidity: 15
+      RefreshTokenValidity: 30
+      TokenValidityUnits: { AccessToken: minutes, IdToken: minutes, RefreshToken: days }
+
+  StudioApp:
+    Type: AWS::Amplify::App
+    Properties:
+      Name: !Sub axcas-${EnvironmentName}-studio
+      Platform: WEB
+      EnvironmentVariables:
+        - { Name: AXCAS_WHATSAPP_NUMBER, Value: !Ref WhatsAppNumber }
+        - { Name: AXCAS_COGNITO_USER_POOL_ID, Value: !Ref UserPool }
+        - { Name: AXCAS_COGNITO_CLIENT_ID, Value: !Ref StudioClient }
+      CustomRules:
+        - { Source: '</^[^.]+$|\.(?!(css|gif|ico|jpg|js|png|svg|woff2)$)([^.]+$)/>', Target: /index.html, Status: '200' }
+
+  StudioBranch:
+    Type: AWS::Amplify::Branch
+    Properties:
+      AppId: !GetAtt StudioApp.AppId
+      BranchName: beta
+      EnableAutoBuild: false
+      Stage: BETA
+
+  OriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub axcas-${EnvironmentName}-sites
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  SitesDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        HttpVersion: http2and3
+        PriceClass: PriceClass_200
+        DefaultRootObject: index.html
+        Origins:
+          - Id: sites
+            DomainName: !GetAtt SitesBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt OriginAccessControl.Id
+            S3OriginConfig: { OriginAccessIdentity: '' }
+        DefaultCacheBehavior:
+          TargetOriginId: sites
+          ViewerProtocolPolicy: redirect-to-https
+          Compress: true
+          AllowedMethods: [GET, HEAD, OPTIONS]
+          CachedMethods: [GET, HEAD, OPTIONS]
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+        CustomErrorResponses:
+          - { ErrorCode: 403, ResponseCode: 404, ResponsePagePath: /404.html, ErrorCachingMinTTL: 30 }
+
+  SitesBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SitesBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: CloudFrontReadOnly
+            Effect: Allow
+            Principal: { Service: cloudfront.amazonaws.com }
+            Action: s3:GetObject
+            Resource: !Sub '${SitesBucket.Arn}/*'
+            Condition: { StringEquals: { 'AWS:SourceArn': !Sub 'arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${SitesDistribution}' } }
+
+  Network:
+    Type: AWS::EC2::VPC
+    Properties: { CidrBlock: 10.42.0.0/16, EnableDnsHostnames: true, EnableDnsSupport: true, Tags: [{ Key: Name, Value: !Sub 'axcas-${EnvironmentName}' }] }
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties: { VpcId: !Ref Network, InternetGatewayId: !Ref InternetGateway }
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties: { VpcId: !Ref Network, AvailabilityZone: !Select [0, !GetAZs ''], CidrBlock: 10.42.1.0/24, MapPublicIpOnLaunch: true }
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties: { VpcId: !Ref Network, AvailabilityZone: !Select [1, !GetAZs ''], CidrBlock: 10.42.2.0/24, MapPublicIpOnLaunch: true }
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties: { VpcId: !Ref Network }
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties: { RouteTableId: !Ref PublicRouteTable, DestinationCidrBlock: 0.0.0.0/0, GatewayId: !Ref InternetGateway }
+  SubnetARoute:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref PublicSubnetA, RouteTableId: !Ref PublicRouteTable }
+  SubnetBRoute:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref PublicSubnetB, RouteTableId: !Ref PublicRouteTable }
+  WorkerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Outbound-only Axcas Fargate workers
+      VpcId: !Ref Network
+      SecurityGroupEgress:
+        - { IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0, Description: AWS and provider HTTPS APIs }
+
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub axcas-${EnvironmentName}
+      ClusterSettings: [{ Name: containerInsights, Value: enabled }]
+
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: { Version: '2012-10-17', Statement: [{ Effect: Allow, Principal: { Service: ecs-tasks.amazonaws.com }, Action: 'sts:AssumeRole' }] }
+      ManagedPolicyArns: [!Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy']
+      Policies:
+        - PolicyName: ReadProviderSecret
+          PolicyDocument: { Version: '2012-10-17', Statement: [{ Effect: Allow, Action: ['secretsmanager:GetSecretValue', 'kms:Decrypt'], Resource: [!Ref ProviderSecrets, !GetAtt DataKey.Arn] }] }
+
+  WorkerTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: { Version: '2012-10-17', Statement: [{ Effect: Allow, Principal: { Service: ecs-tasks.amazonaws.com }, Action: 'sts:AssumeRole' }] }
+      Policies:
+        - PolicyName: BoundedProductActions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - { Effect: Allow, Action: ['sqs:ReceiveMessage', 'sqs:DeleteMessage', 'sqs:ChangeMessageVisibility', 'sqs:GetQueueAttributes'], Resource: [!GetAtt IngressQueue.Arn, !GetAtt CampaignQueue.Arn] }
+              - { Effect: Allow, Action: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:Query'], Resource: [!GetAtt StateTable.Arn, !GetAtt LedgerTable.Arn, !Sub '${StateTable.Arn}/index/*'] }
+              - { Effect: Allow, Action: ['s3:GetObject', 's3:PutObject'], Resource: [!Sub '${AssetsBucket.Arn}/*', !Sub '${SitesBucket.Arn}/*', !Sub '${EvidenceBucket.Arn}/*'] }
+              - { Effect: Allow, Action: ['kms:Decrypt', 'kms:Encrypt', 'kms:GenerateDataKey'], Resource: !GetAtt DataKey.Arn }
+              - { Effect: Allow, Action: ['bedrock:InvokeModel', 'polly:SynthesizeSpeech'], Resource: '*' }
+
+  WorkerLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties: { LogGroupName: !Sub '/axcas/${EnvironmentName}/workers', RetentionInDays: 30 }
+
+  WorkerTask:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub axcas-${EnvironmentName}-worker
+      Cpu: '1024'
+      Memory: '2048'
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt WorkerTaskRole.Arn
+      ContainerDefinitions:
+        - Name: hermes
+          Image: !Ref HermesImageUri
+          Essential: true
+          Command: [hermes, --gateway]
+          Environment:
+            - { Name: WHATSAPP_CLOUD_ALLOW_ALL_USERS, Value: 'true' }
+            - { Name: WHATSAPP_CLOUD_WEBHOOK_HOST, Value: '127.0.0.1' }
+            - { Name: WHATSAPP_CLOUD_WEBHOOK_PORT, Value: '8090' }
+            - { Name: WHATSAPP_CLOUD_WEBHOOK_PATH, Value: '/whatsapp/webhook' }
+            - { Name: WHATSAPP_CLOUD_API_VERSION, Value: !Ref MetaGraphApiVersion }
+            - { Name: AXCAS_BRIDGE_SOCKET, Value: '/run/axcas/tool-bridge.sock' }
+          Secrets:
+            - { Name: WHATSAPP_CLOUD_PHONE_NUMBER_ID, ValueFrom: !Sub '${ProviderSecrets}:WHATSAPP_CLOUD_PHONE_NUMBER_ID::' }
+            - { Name: WHATSAPP_CLOUD_ACCESS_TOKEN, ValueFrom: !Sub '${ProviderSecrets}:WHATSAPP_CLOUD_ACCESS_TOKEN::' }
+            - { Name: WHATSAPP_CLOUD_APP_ID, ValueFrom: !Sub '${ProviderSecrets}:WHATSAPP_CLOUD_APP_ID::' }
+            - { Name: WHATSAPP_CLOUD_APP_SECRET, ValueFrom: !Sub '${ProviderSecrets}:META_APP_SECRET::' }
+            - { Name: WHATSAPP_CLOUD_WABA_ID, ValueFrom: !Sub '${ProviderSecrets}:WHATSAPP_CLOUD_WABA_ID::' }
+            - { Name: WHATSAPP_CLOUD_VERIFY_TOKEN, ValueFrom: !Sub '${ProviderSecrets}:META_VERIFY_TOKEN::' }
+            - { Name: OPENROUTER_API_KEY, ValueFrom: !Sub '${ProviderSecrets}:OPENROUTER_API_KEY::' }
+          MountPoints: [{ SourceVolume: axcas-runtime, ContainerPath: /run/axcas, ReadOnly: false }]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options: { awslogs-group: !Ref WorkerLogGroup, awslogs-region: !Ref 'AWS::Region', awslogs-stream-prefix: hermes }
+        - Name: relay
+          Image: !Ref WorkerImageUri
+          Essential: true
+          DependsOn: [{ ContainerName: hermes, Condition: START }]
+          Command: [node, dist/apps/hermes-sqs-relay/src/server.js]
+          Environment:
+            - { Name: AXCAS_ENVIRONMENT, Value: !Ref EnvironmentName }
+            - { Name: AXCAS_STATE_TABLE, Value: !Ref StateTable }
+            - { Name: AXCAS_LEDGER_TABLE, Value: !Ref LedgerTable }
+            - { Name: HERMES_RELAY_QUEUE_URL, Value: !Ref IngressQueue }
+            - { Name: HERMES_UPSTREAM_URL, Value: 'http://127.0.0.1:8090/whatsapp/webhook' }
+            - { Name: AXCAS_CAMPAIGN_QUEUE_URL, Value: !Ref CampaignQueue }
+            - { Name: AXCAS_ASSETS_BUCKET, Value: !Ref AssetsBucket }
+            - { Name: AXCAS_SITES_BUCKET, Value: !Ref SitesBucket }
+            - { Name: META_GRAPH_API_VERSION, Value: !Ref MetaGraphApiVersion }
+          LogConfiguration:
+            LogDriver: awslogs
+            Options: { awslogs-group: !Ref WorkerLogGroup, awslogs-region: !Ref 'AWS::Region', awslogs-stream-prefix: relay }
+        - Name: tool-bridge
+          Image: !Ref WorkerImageUri
+          Essential: true
+          Command: [node, dist/apps/axcas-tool-bridge/src/server.js]
+          Environment:
+            - { Name: AXCAS_STATE_TABLE, Value: !Ref StateTable }
+            - { Name: AXCAS_LEDGER_TABLE, Value: !Ref LedgerTable }
+            - { Name: AXCAS_ASSETS_BUCKET, Value: !Ref AssetsBucket }
+            - { Name: AXCAS_SITES_BUCKET, Value: !Ref SitesBucket }
+            - { Name: AXCAS_BRIDGE_SOCKET, Value: '/run/axcas/tool-bridge.sock' }
+            - { Name: PROOFGATE_ADMIN_URL, Value: !Ref MigrationAdminOriginUrl }
+            - { Name: AXCAS_ADMIN_ORIGIN_ALLOWLIST, Value: !Ref MigrationAdminOriginUrl }
+          Secrets:
+            - { Name: PROOFGATE_SERVICE_SECRET, ValueFrom: !Sub '${ProviderSecrets}:PROOFGATE_SERVICE_SECRET::' }
+          MountPoints: [{ SourceVolume: axcas-runtime, ContainerPath: /run/axcas, ReadOnly: false }]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options: { awslogs-group: !Ref WorkerLogGroup, awslogs-region: !Ref 'AWS::Region', awslogs-stream-prefix: tool-bridge }
+      Volumes: [{ Name: axcas-runtime }]
+
+  OrchestrationTask:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub axcas-${EnvironmentName}-orchestration
+      Cpu: '1024'
+      Memory: '2048'
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt WorkerTaskRole.Arn
+      ContainerDefinitions:
+        - Name: workflow
+          Image: !Ref WorkerImageUri
+          Essential: true
+          Command: [node, dist/apps/aws-control-plane/src/workflow-task.js]
+          Environment:
+            - { Name: AXCAS_WORKFLOW_TASK_AUTO_RUN, Value: '1' }
+            - { Name: AXCAS_STATE_TABLE, Value: !Ref StateTable }
+            - { Name: AXCAS_LEDGER_TABLE, Value: !Ref LedgerTable }
+            - { Name: PROOFGATE_ADMIN_URL, Value: !Ref MigrationAdminOriginUrl }
+            - { Name: AXCAS_ADMIN_ORIGIN_ALLOWLIST, Value: !Ref MigrationAdminOriginUrl }
+          Secrets:
+            - { Name: PROOFGATE_SERVICE_SECRET, ValueFrom: !Sub '${ProviderSecrets}:PROOFGATE_SERVICE_SECRET::' }
+          LogConfiguration:
+            LogDriver: awslogs
+            Options: { awslogs-group: !Ref WorkerLogGroup, awslogs-region: !Ref 'AWS::Region', awslogs-stream-prefix: workflow }
+
+  WorkerService:
+    Type: AWS::ECS::Service
+    DependsOn: PublicRoute
+    Properties:
+      Cluster: !Ref Cluster
+      TaskDefinition: !Ref WorkerTask
+      DesiredCount: 2
+      LaunchType: FARGATE
+      DeploymentConfiguration: { MinimumHealthyPercent: 50, MaximumPercent: 200, DeploymentCircuitBreaker: { Enable: true, Rollback: true } }
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups: [!Ref WorkerSecurityGroup]
+          Subnets: [!Ref PublicSubnetA, !Ref PublicSubnetB]
+
+  ControlPlaneRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: { Version: '2012-10-17', Statement: [{ Effect: Allow, Principal: { Service: lambda.amazonaws.com }, Action: 'sts:AssumeRole' }] }
+      ManagedPolicyArns: [!Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole']
+      Policies:
+        - PolicyName: IngressAndState
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - { Effect: Allow, Action: ['sqs:SendMessage'], Resource: [!GetAtt IngressQueue.Arn, !GetAtt CampaignQueue.Arn, !GetAtt MediaVerificationQueue.Arn] }
+              - { Effect: Allow, Action: ['sqs:ReceiveMessage', 'sqs:DeleteMessage', 'sqs:ChangeMessageVisibility', 'sqs:GetQueueAttributes'], Resource: !GetAtt MediaVerificationQueue.Arn }
+              - { Effect: Allow, Action: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:Query'], Resource: [!GetAtt StateTable.Arn, !GetAtt LedgerTable.Arn, !Sub '${StateTable.Arn}/index/*'] }
+              - { Effect: Allow, Action: ['kms:Decrypt', 'kms:Encrypt', 'kms:GenerateDataKey'], Resource: !GetAtt DataKey.Arn }
+              - { Effect: Allow, Action: ['states:StartExecution', 'states:SendTaskSuccess', 'states:SendTaskFailure'], Resource: '*' }
+              - { Effect: Allow, Action: ['secretsmanager:GetSecretValue'], Resource: !Ref ProviderSecrets }
+              - { Effect: Allow, Action: ['s3:AbortMultipartUpload', 's3:PutObject', 's3:GetObject'], Resource: !Sub '${AssetsBucket.Arn}/*' }
+
+  ControlPlaneFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      PackageType: Image
+      Code: { ImageUri: !Ref ControlPlaneImageUri }
+      Role: !GetAtt ControlPlaneRole.Arn
+      Timeout: 15
+      MemorySize: 512
+      Architectures: [x86_64]
+      Environment:
+        Variables:
+          AXCAS_STATE_TABLE: !Ref StateTable
+          AXCAS_LEDGER_TABLE: !Ref LedgerTable
+          AXCAS_INGRESS_QUEUE_URL: !Ref IngressQueue
+          AXCAS_MEDIA_VERIFICATION_QUEUE_URL: !Ref MediaVerificationQueue
+          AXCAS_WHATSAPP_NUMBER: !Ref WhatsAppNumber
+          AXCAS_PROVIDER_SECRET_ARN: !Ref ProviderSecrets
+          AXCAS_ASSETS_BUCKET: !Ref AssetsBucket
+          AXCAS_DATA_KEY_ID: !Ref DataKey
+          AXCAS_PUBLIC_API_URL: !Sub 'https://${PublicApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}'
+          META_GRAPH_API_VERSION: !Ref MetaGraphApiVersion
+      ImageConfig: { Command: ['handler.handler'] }
+
+  AuthChallengeFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      PackageType: Image
+      Code: { ImageUri: !Ref ControlPlaneImageUri }
+      Role: !GetAtt ControlPlaneRole.Arn
+      Timeout: 15
+      MemorySize: 256
+      Architectures: [x86_64]
+      Environment:
+        Variables:
+          AXCAS_PROVIDER_SECRET_ARN: !Ref ProviderSecrets
+          AXCAS_STATE_TABLE: !Ref StateTable
+          AXCAS_AUTH_TEMPLATE: axcas_login_code
+          META_GRAPH_API_VERSION: !Ref MetaGraphApiVersion
+      ImageConfig: { Command: ['cognito-challenge.handler'] }
+
+  MediaVerifierFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      PackageType: Image
+      Code: { ImageUri: !Ref ControlPlaneImageUri }
+      Role: !GetAtt ControlPlaneRole.Arn
+      Timeout: 900
+      MemorySize: 1024
+      EphemeralStorage: { Size: 512 }
+      Architectures: [x86_64]
+      Environment:
+        Variables:
+          AXCAS_STATE_TABLE: !Ref StateTable
+          AXCAS_LEDGER_TABLE: !Ref LedgerTable
+          AXCAS_ASSETS_BUCKET: !Ref AssetsBucket
+      ImageConfig: { Command: ['media-verifier.handler'] }
+
+  MediaVerifierEventSource:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt MediaVerificationQueue.Arn
+      FunctionName: !Ref MediaVerifierFunction
+      Enabled: true
+      BatchSize: 1
+      FunctionResponseTypes: [ReportBatchItemFailures]
+
+  AuthChallengeInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref AuthChallengeFunction
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !Sub 'arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/*'
+
+  PublicApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties: { Name: !Sub 'axcas-${EnvironmentName}', ProtocolType: HTTP }
+  PublicApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties: { ApiId: !Ref PublicApi, IntegrationType: AWS_PROXY, IntegrationUri: !GetAtt ControlPlaneFunction.Arn, PayloadFormatVersion: '2.0', TimeoutInMillis: 15000 }
+  StudioApiAuthorizer:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Properties:
+      ApiId: !Ref PublicApi
+      AuthorizerType: JWT
+      IdentitySource: ['$request.header.Authorization']
+      Name: !Sub axcas-${EnvironmentName}-studio-jwt
+      JwtConfiguration:
+        Audience: [!Ref StudioClient]
+        Issuer: !Sub 'https://cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${UserPool}'
+  MetaOAuthStartRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref PublicApi
+      RouteKey: 'GET /oauth/meta/start'
+      Target: !Sub 'integrations/${PublicApiIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref StudioApiAuthorizer
+  StudioMediaUploadRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref PublicApi
+      RouteKey: 'POST /studio/media/uploads'
+      Target: !Sub 'integrations/${PublicApiIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref StudioApiAuthorizer
+  StudioMediaPartRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref PublicApi
+      RouteKey: 'POST /studio/media/uploads/{assetId}/parts'
+      Target: !Sub 'integrations/${PublicApiIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref StudioApiAuthorizer
+  StudioMediaCompleteRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref PublicApi
+      RouteKey: 'POST /studio/media/uploads/{assetId}/complete'
+      Target: !Sub 'integrations/${PublicApiIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref StudioApiAuthorizer
+  PublicApiRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties: { ApiId: !Ref PublicApi, RouteKey: '$default', Target: !Sub 'integrations/${PublicApiIntegration}' }
+  PublicApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties: { ApiId: !Ref PublicApi, StageName: '$default', AutoDeploy: true, DefaultRouteSettings: { ThrottlingBurstLimit: 100, ThrottlingRateLimit: 50 } }
+  PublicApiInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties: { Action: 'lambda:InvokeFunction', FunctionName: !Ref ControlPlaneFunction, Principal: apigateway.amazonaws.com, SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${PublicApi}/*' }
+
+  ApiWebAcl:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: !Sub axcas-${EnvironmentName}-api
+      Scope: REGIONAL
+      DefaultAction: { Allow: {} }
+      VisibilityConfig: { CloudWatchMetricsEnabled: true, MetricName: !Sub 'axcas-${EnvironmentName}-api', SampledRequestsEnabled: true }
+      Rules:
+        - Name: AWSCommonRules
+          Priority: 1
+          OverrideAction: { None: {} }
+          Statement: { ManagedRuleGroupStatement: { VendorName: AWS, Name: AWSManagedRulesCommonRuleSet } }
+          VisibilityConfig: { CloudWatchMetricsEnabled: true, MetricName: common, SampledRequestsEnabled: true }
+        - Name: RateLimit
+          Priority: 2
+          Action: { Block: {} }
+          Statement: { RateBasedStatement: { Limit: 600, AggregateKeyType: IP } }
+          VisibilityConfig: { CloudWatchMetricsEnabled: true, MetricName: rate, SampledRequestsEnabled: true }
+  ApiWebAclAssociation:
+    Type: AWS::WAFv2::WebACLAssociation
+    Properties: { ResourceArn: !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}::/apis/${PublicApi}/stages/$default', WebACLArn: !GetAtt ApiWebAcl.Arn }
+
+  WorkflowRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: { Version: '2012-10-17', Statement: [{ Effect: Allow, Principal: { Service: states.amazonaws.com }, Action: 'sts:AssumeRole' }] }
+      Policies:
+        - PolicyName: StartFargateAndNotify
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - { Effect: Allow, Action: ['ecs:RunTask', 'ecs:StopTask', 'ecs:DescribeTasks'], Resource: '*' }
+              - { Effect: Allow, Action: ['iam:PassRole'], Resource: [!GetAtt WorkerTaskRole.Arn, !GetAtt TaskExecutionRole.Arn] }
+              - { Effect: Allow, Action: ['sns:Publish'], Resource: !Ref OperationsTopic }
+
+  MerchantWorkflow:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub axcas-${EnvironmentName}-merchant-workflow
+      StateMachineType: STANDARD
+      RoleArn: !GetAtt WorkflowRole.Arn
+      DefinitionString: !Sub |
+        {
+          "Comment": "Agents draft; callback approvals gate every external effect",
+          "StartAt": "ValidateTenantBoundInput",
+          "States": {
+            "ValidateTenantBoundInput": { "Type": "Pass", "Next": "DispatchReversibleWork" },
+            "DispatchReversibleWork": {
+              "Type": "Task",
+              "Resource": "arn:${AWS::Partition}:states:::ecs:runTask.sync",
+              "Parameters": {
+                "Cluster": "${Cluster}", "TaskDefinition": "${OrchestrationTask}", "LaunchType": "FARGATE",
+                "NetworkConfiguration": { "AwsvpcConfiguration": { "AssignPublicIp": "ENABLED", "SecurityGroups": ["${WorkerSecurityGroup}"], "Subnets": ["${PublicSubnetA}", "${PublicSubnetB}"] } },
+                "Overrides": { "ContainerOverrides": [{ "Name": "workflow", "Environment": [{ "Name": "AXCAS_WORKFLOW_INPUT", "Value.$": "States.JsonToString($.workflowTask)" }] }] }
+              },
+              "ResultPath": "$.agentTask",
+              "Next": "AwaitExactApproval"
+            },
+            "AwaitExactApproval": { "Type": "Task", "Resource": "arn:${AWS::Partition}:states:::sqs:sendMessage.waitForTaskToken", "Parameters": { "QueueUrl": "${CampaignQueue}", "MessageGroupId.$": "$.merchantId", "MessageDeduplicationId.$": "$.scopeHash", "MessageBody": { "taskToken.$": "$$.Task.Token", "scopeHash.$": "$.scopeHash", "merchantId.$": "$.merchantId" } }, "TimeoutSeconds": 86400, "Next": "DeterministicExternalAction" },
+            "DeterministicExternalAction": { "Type": "Pass", "End": true }
+          }
+        }
+
+  CampaignScheduleGroup:
+    Type: AWS::Scheduler::ScheduleGroup
+    Properties: { Name: !Sub 'axcas-${EnvironmentName}-campaigns' }
+
+  OperationsTopic:
+    Type: AWS::SNS::Topic
+    Properties: { TopicName: !Sub 'axcas-${EnvironmentName}-operations', KmsMasterKeyId: !Ref DataKey }
+  OperationsSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasOperatorAlertEmail
+    Properties: { Protocol: email, Endpoint: !Ref OperatorAlertEmail, TopicArn: !Ref OperationsTopic }
+
+  IngressAgeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub axcas-${EnvironmentName}-ingress-age
+      Namespace: AWS/SQS
+      MetricName: ApproximateAgeOfOldestMessage
+      Dimensions: [{ Name: QueueName, Value: !GetAtt IngressQueue.QueueName }]
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 120
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref OperationsTopic]
+  IngressDlqAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub axcas-${EnvironmentName}-ingress-dlq
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions: [{ Name: QueueName, Value: !GetAtt IngressDeadLetterQueue.QueueName }]
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref OperationsTopic]
+
+Outputs:
+  PublicApiUrl: { Value: !GetAtt PublicApi.ApiEndpoint }
+  StudioDefaultDomain: { Value: !GetAtt StudioApp.DefaultDomain }
+  SitesDomain: { Value: !GetAtt SitesDistribution.DomainName }
+  UserPoolId: { Value: !Ref UserPool }
+  StudioClientId: { Value: !Ref StudioClient }
+  StateTableName: { Value: !Ref StateTable }
+  LedgerTableName: { Value: !Ref LedgerTable }
+  AssetsBucketName: { Value: !Ref AssetsBucket }
+  SitesBucketName: { Value: !Ref SitesBucket }
+  EvidenceBucketName: { Value: !Ref EvidenceBucket }
+  WorkflowArn: { Value: !Ref MerchantWorkflow }
+  ProviderSecretArn: { Value: !Ref ProviderSecrets }

@@ -1,0 +1,19 @@
+FROM node:22-bookworm-slim AS build
+WORKDIR /workspace
+COPY package.json package-lock.json ./
+COPY apps ./apps
+COPY packages ./packages
+RUN npm ci --ignore-scripts
+RUN npx esbuild apps/hermes-sqs-relay/src/server.ts apps/axcas-tool-bridge/src/server.ts apps/aws-control-plane/src/workflow-task.ts \
+    --bundle --platform=node --target=node22 --format=esm --outbase=. --outdir=/out/dist
+
+FROM node:22-bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system axcas \
+    && useradd --system --gid axcas --create-home axcas
+WORKDIR /opt/axcas
+COPY --from=build /out/dist ./dist
+RUN mkdir -p /run/axcas && chown -R axcas:axcas /opt/axcas /run/axcas
+USER axcas
+CMD ["node", "dist/apps/hermes-sqs-relay/src/server.js"]

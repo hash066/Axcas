@@ -27,10 +27,25 @@ function scopedEnvironment(env: NodeJS.ProcessEnv, context: MerchantWorkflowInpu
   };
 }
 
-function adminOrigin(env: NodeJS.ProcessEnv): URL {
+export function resolveAdminOrigin(env: NodeJS.ProcessEnv): URL {
   if (!env.PROOFGATE_ADMIN_URL) throw new Error("Axcas service origin is unavailable");
   const origin = new URL(env.PROOFGATE_ADMIN_URL);
-  if (origin.protocol !== "https:" || !origin.hostname.endsWith(".workers.dev") || origin.pathname !== "/") throw new Error("Axcas service origin is invalid");
+  if (origin.protocol !== "https:" || origin.username || origin.password || origin.pathname !== "/" || origin.search || origin.hash) {
+    throw new Error("Axcas service origin is invalid");
+  }
+  const legacyWorker = origin.hostname.endsWith(".workers.dev");
+  const allowlist = (env.AXCAS_ADMIN_ORIGIN_ALLOWLIST ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map((value) => {
+      const allowed = new URL(value);
+      if (allowed.protocol !== "https:" || allowed.username || allowed.password || allowed.pathname !== "/" || allowed.search || allowed.hash) {
+        throw new Error("Axcas administrative origin allowlist is invalid");
+      }
+      return allowed.origin;
+    });
+  if (!legacyWorker && !allowlist.includes(origin.origin)) throw new Error("Axcas service origin is invalid");
   return origin;
 }
 
@@ -84,7 +99,7 @@ export class ProofGateBoundary implements AxcasBoundary {
     previewUrl: string;
     context: MerchantWorkflowInput["context"];
   }): Promise<VerificationResult> {
-    const origin = adminOrigin(this.env);
+    const origin = resolveAdminOrigin(this.env);
     const preview = new URL(scope.previewUrl);
     if (preview.origin !== origin.origin) throw new Error("preview is outside the Axcas release origin");
     const command = await prepareJsonCommand("verification", {
@@ -114,7 +129,7 @@ export class ProofGateBoundary implements AxcasBoundary {
   }
 
   async assertPublished(scope: { siteId: string; versionId: string; specHash: string }): Promise<void> {
-    const origin = adminOrigin(this.env);
+    const origin = resolveAdminOrigin(this.env);
     const response = await this.fetcher(new URL(`/s/${encodeURIComponent(scope.siteId)}`, origin), {
       method: "GET",
       redirect: "error",

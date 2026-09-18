@@ -2,6 +2,21 @@
 
 Axcas turns a small business owner’s voice note, prices, services, photos, and reference reels into a verified business site and original reel system. WhatsApp remains the fastest path; `/studio` is a guided visual workspace for merchants who want to choose layouts, formats, and layers. ProofGate remains the internal verification and release engine name.
 
+## AWS-native production redesign
+
+The current source is migrating from the Cloudflare/Convex private beta to a separate AWS-native
+stack in `infra/aws-native`. The replacement uses API Gateway/WAF, FIFO SQS, Step Functions,
+redundant ECS Fargate workers, Cognito, DynamoDB, encrypted S3, CloudFront, Amplify,
+EventBridge, CloudWatch, SNS, Bedrock, Polly, and the existing capability-separated verifier and
+release authority. The configured customer-facing number is `+91 91804 99647`; it is **not live**
+until the unused SIM is registered and OTP-verified in the Axcas WABA.
+
+The new contracts add constrained `SiteSpecV3` publication, merchant OAuth for Instagram/Page/Ad
+Account access, capability-gated Trial Reels, exact-hash three-variant campaigns, paused paid-ad
+creation, INR spend ceilings, raw metric snapshots, and tenant-specific learning artifacts. These
+are source/test facts until the AWS stack, Meta app review, first real site, Reel, post, capped ad,
+and feedback receipt are recorded in `EVIDENCE.md`.
+
 ## Agents for Humans entry
 
 Axcas enters the **Professional Agents** track. The hackathon-period Axcas product was created after 10 August 2026 on top of the older, disclosed ProofGate verification foundation; the repository history is intentionally preserved. The entry uses the official `@strands-agents/sdk` to coordinate typed intake, candidate, independent-verification, approval-request, metrics, and improvement tools. Strands cannot approve, promote, publish, run shell commands, or obtain provider credentials.
@@ -26,7 +41,7 @@ The launch flow remains constrained:
 8. Hermes reports raw views/clicks and proposes—not publishes—a verified improvement.
 9. Axcas Studio offers Website, Reels, or Both, with WhatsApp-linked passwordless access, append-only project revisions, private uploads, five site layouts, five human-led reel formats, and editable hook/proof/CTA layers.
 
-There is no blank-canvas site-code editor, payment flow, scraped lead source, synthetic product imagery, automatic posting, or autonomous publishing.
+There is no blank-canvas site-code editor, payment flow, scraped lead source, synthetic product imagery, unapproved posting, or unbounded autonomous publishing. Exact approved campaigns may schedule their bound organic posts and capped merchant-funded ads after live provider acceptance.
 
 ## Run locally
 
@@ -78,6 +93,7 @@ Commands validate locally by default. Add `--submit` only from the configured He
 | Path | Responsibility |
 |---|---|
 | `packages/domain/src/growth.ts` | Business, site, consent, approval, outcome, and reel schemas |
+| `packages/domain/src/production-redesign.ts` | AWS-native SiteSpec V3, Meta connection, campaign, publication, metric, and learning contracts |
 | `packages/domain/src/studio.ts` | Studio intent, project, reel style-profile, layer, and approval-checklist schemas |
 | `packages/renderer/src/render-bakery-site.ts` | Constrained, XSS-safe catalog renderer |
 | `packages/release-policy/src/growth-policy.ts` | Immutable call-batch hash and approval predicate |
@@ -87,9 +103,10 @@ Commands validate locally by default. Add `--submit` only from the configured He
 | `apps/reel-template-worker` | Owner-authorized Remotion compositions, private-asset adapter, and 1080×1920 render CLI |
 | `apps/edge-runtime` | Public routes, webhooks, tracked redirects, private admin boundary |
 | `apps/strands-orchestrator` | Strands reasoning/tool loop, guarded workflow state, Bedrock runtime contract |
+| `apps/aws-control-plane` | AWS webhook ingress, FIFO dispatch, exact approval callback, and deterministic site publication |
 | `convex/growth.ts` | Durable events, approvals, consent, guardian claims, structured outcomes |
 | `hermes/skills/proofgate` | Hermes operating policy and typed commands |
-| `infra/` | Credential-gated Cloudflare and AWS foundation |
+| `infra/aws-native` | Replacement Cognito, API, queues, workflows, Fargate, DynamoDB, S3, CloudFront, Amplify and monitoring stack |
 
 ## Public surface
 
@@ -112,7 +129,7 @@ All remaining administrative mutation routes are bearer-authenticated and intend
 See [Production launch](docs/PRODUCTION_LAUNCH.md) for the no-customer-API-key model,
 server topology, launch sequence, and initial commercial packaging.
 
-Convex development and production are deployed with separate service secrets. The hardened no-card File Storage fallback was verified through the public Worker with one synthetic PNG and an idempotent replay; release separation correctly kept it private. Worker HTTPS, the WhatsApp GET challenge, and the authenticated AWS Hermes origin are live. R2 remains card-blocked and optional. The durable origin is an AWS API Gateway ingress backed by encrypted SQS and an outbound-only EC2 relay; one complete second-merchant acceptance run is still required before unrestricted onboarding.
+Convex development and production remain the deployed private-beta state while the new AWS stack is source-only. The hardened no-card File Storage fallback was verified through the public Worker with one synthetic PNG and an idempotent replay; release separation correctly kept it private. Worker HTTPS, the WhatsApp GET challenge, and the authenticated AWS Hermes origin are live. R2 remains card-blocked and optional. Do not call the AWS-native migration complete until its independent deployment and eleven-step live acceptance are recorded.
 
 See [architecture](docs/architecture.md), [provider readiness](docs/provider-readiness.md), [privacy and consent](docs/privacy-and-consent.md), and [evidence](EVIDENCE.md).
 The six-step live run and exact evidence requirements are in [live acceptance](docs/LIVE_ACCEPTANCE.md).

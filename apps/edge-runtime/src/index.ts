@@ -677,7 +677,7 @@ export function createApp(evidenceBoundary: EvidenceBoundary = liveEvidenceBound
     const browserNonce = base64UrlEncode(crypto.getRandomValues(new Uint8Array(24)));
     const expiresAt = Date.now() + 10 * 60_000;
     await adminBoundary.createStudioLink({ linkId, codeHash: await sha256(code), browserNonceHash: await sha256(browserNonce), intent, expiresAt }, context.env);
-    const number = (context.env?.AXCAS_WHATSAPP_NUMBER ?? "15556537153").replace(/\D/g, "");
+    const number = (context.env?.AXCAS_WHATSAPP_NUMBER ?? "919180499647").replace(/\D/g, "");
     return context.json({ whatsappUrl: `https://wa.me/${number}?text=${encodeURIComponent(`AXCAS LINK ${code}`)}`, expiresAt }, 201, {
       "cache-control": "no-store",
       "set-cookie": `axcas_link=${linkId}.${browserNonce}; Path=/api/studio; Max-Age=600; Secure; HttpOnly; SameSite=Lax`,
