@@ -6,12 +6,21 @@ import { AbortMultipartUploadCommand, CompleteMultipartUploadCommand, CreateMult
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { SendTaskFailureCommand, SendTaskSuccessCommand, SFNClient } from "@aws-sdk/client-sfn";
-import { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, TransactWriteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 
 import { createAwsControlPlaneApp, type AwsControlPlaneDependencies } from "./app";
 import { buildMetaBusinessLoginUrl, createMetaOAuthState, discoverMetaBusinessAssets, exchangeMetaAuthorizationCode, verifyMetaOAuthState } from "../../../packages/social/src/meta-oauth";
 import { CompleteUploadRequestSchema, UploadPartRequestSchema, initiateTenantUpload } from "./media-upload";
+import {
+  applyStudioSitePatch,
+  createPendingStudioReleaseApproval,
+  StudioApiError,
+  StudioApprovalCreateRequestSchema,
+  StudioProjectRevisionSchema,
+  studioApprovalView,
+  type StudioProjectRevision,
+} from "./studio-api";
 
 type ApiGatewayEvent = {
   rawPath?: string;
@@ -107,6 +116,34 @@ async function dependencies(): Promise<AwsControlPlaneDependencies> {
     if (!merchantId) throw new Error("Studio identity is not linked");
     return merchantId;
   };
+  const identityForSubject = async (authSubject: string): Promise<{ merchantId: string; ownerWaIdHash: string }> => {
+    const identity = await dynamo.send(new GetCommand({ TableName: tableName, Key: { pk: `IDENTITY#${authSubject}`, sk: "PROFILE" }, ConsistentRead: true }));
+    const profile = identity.Item as { merchantId?: string; ownerWaIdHash?: string } | undefined;
+    if (!profile?.merchantId || !/^[a-f0-9]{64}$/.test(profile.ownerWaIdHash ?? "")) throw new StudioApiError("authentication_required", 401);
+    return { merchantId: profile.merchantId, ownerWaIdHash: profile.ownerWaIdHash! };
+  };
+  const projectFromItem = (item: Record<string, unknown>): StudioProjectRevision => StudioProjectRevisionSchema.parse({
+    schemaVersion: item.schemaVersion,
+    projectId: item.projectId,
+    merchantId: item.merchantId,
+    revision: item.revision,
+    spec: item.spec,
+    specHash: item.specHash,
+    updatedAt: item.updatedAt,
+    updatedBy: item.updatedBy,
+  });
+  const projectForMerchant = async (merchantId: string, projectId: string): Promise<StudioProjectRevision> => {
+    const response = await dynamo.send(new GetCommand({ TableName: tableName, Key: { pk: `TENANT#${merchantId}`, sk: `PROJECT#${projectId}` }, ConsistentRead: true }));
+    if (!response.Item) throw new StudioApiError("not_found", 404);
+    try {
+      const project = projectFromItem(response.Item);
+      if (project.merchantId !== merchantId || project.projectId !== projectId || project.spec.merchantId !== merchantId) throw new Error("tenant mismatch");
+      return project;
+    } catch {
+      // A malformed or cross-tenant row fails closed and is not reflected to the customer.
+      throw new StudioApiError("not_found", 404);
+    }
+  };
   const uploadForSubject = async (authSubject: string, assetId: string) => {
     const merchantId = await merchantForSubject(authSubject);
     const response = await dynamo.send(new GetCommand({ TableName: tableName, Key: { pk: `TENANT#${merchantId}`, sk: `ASSET#${assetId}` }, ConsistentRead: true }));
@@ -130,6 +167,92 @@ async function dependencies(): Promise<AwsControlPlaneDependencies> {
         : `Hello ${result.site.businessName}, I found you on your website and would like to know more.`;
       const number = result.site.orderWhatsAppNumber.replace(/\D/g, "");
       return { location: `https://wa.me/${number}?text=${encodeURIComponent(message)}`, setCookie: result.setCookie };
+    },
+    getStudioAccount: async ({ authSubject }) => {
+      const { merchantId } = await identityForSubject(authSubject);
+      const [accountResult, projectResult] = await Promise.all([
+        dynamo.send(new GetCommand({ TableName: tableName, Key: { pk: `TENANT#${merchantId}`, sk: "ACCOUNT" }, ConsistentRead: true })),
+        dynamo.send(new QueryCommand({
+          TableName: tableName,
+          KeyConditionExpression: "pk = :tenant AND begins_with(sk, :project)",
+          FilterExpression: "entityType = :current",
+          ExpressionAttributeValues: { ":tenant": `TENANT#${merchantId}`, ":project": "PROJECT#", ":current": "studio_project_current" },
+          ConsistentRead: true,
+        })),
+      ]);
+      const account = accountResult.Item as Record<string, unknown> | undefined;
+      if (!account || account.merchantId !== merchantId) throw new StudioApiError("not_found", 404);
+      const projects = (projectResult.Items ?? []).map(projectFromItem);
+      return {
+        account: { merchantId, locale: account.locale, timezone: account.timezone, plan: account.plan },
+        projects,
+      };
+    },
+    getStudioProject: async ({ authSubject, projectId }) => {
+      const { merchantId } = await identityForSubject(authSubject);
+      return projectForMerchant(merchantId, projectId);
+    },
+    patchStudioProject: async ({ authSubject, projectId, request }) => {
+      const { merchantId } = await identityForSubject(authSubject);
+      const current = await projectForMerchant(merchantId, projectId);
+      const now = Date.now();
+      const next = await applyStudioSitePatch(current, request, { now, updatedBy: "studio" });
+      const revisionKey = `PROJECT#${projectId}#REV#${String(next.revision).padStart(10, "0")}`;
+      try {
+        await dynamo.send(new TransactWriteCommand({ TransactItems: [
+          { Put: {
+            TableName: tableName,
+            Item: { pk: `TENANT#${merchantId}`, sk: `PROJECT#${projectId}`, entityType: "studio_project_current", ...next },
+            ConditionExpression: "revision = :expected AND merchantId = :merchant",
+            ExpressionAttributeValues: { ":expected": current.revision, ":merchant": merchantId },
+          } },
+          { Put: {
+            TableName: tableName,
+            Item: { pk: `TENANT#${merchantId}`, sk: revisionKey, entityType: "studio_project_revision", ...next },
+            ConditionExpression: "attribute_not_exists(pk) AND attribute_not_exists(sk)",
+          } },
+          { Put: {
+            TableName: ledgerTable,
+            Item: { pk: `TENANT#${merchantId}`, sk: `PROJECT_REVISION#${projectId}#${next.revision}`, eventType: "studio_project_revision_created", projectId, revision: next.revision, specHash: next.specHash, occurredAt: now },
+            ConditionExpression: "attribute_not_exists(pk) AND attribute_not_exists(sk)",
+          } },
+        ] }));
+      } catch (error) {
+        if ((error as { name?: string }).name === "TransactionCanceledException") throw new StudioApiError("revision_conflict", 409);
+        throw error;
+      }
+      return next;
+    },
+    listStudioApprovals: async ({ authSubject }) => {
+      const { merchantId } = await identityForSubject(authSubject);
+      const result = await dynamo.send(new QueryCommand({
+        TableName: tableName,
+        KeyConditionExpression: "pk = :tenant AND begins_with(sk, :approval)",
+        ExpressionAttributeValues: { ":tenant": `TENANT#${merchantId}`, ":approval": "APPROVAL#" },
+        ConsistentRead: true,
+      }));
+      return { approvals: (result.Items ?? []).map(studioApprovalView) };
+    },
+    createStudioApproval: async ({ authSubject, projectId, request: requestInput }) => {
+      const identity = await identityForSubject(authSubject);
+      const request = StudioApprovalCreateRequestSchema.parse(requestInput);
+      const project = await projectForMerchant(identity.merchantId, projectId);
+      const now = Date.now();
+      const approval = await createPendingStudioReleaseApproval({
+        project,
+        ownerWaIdHash: identity.ownerWaIdHash,
+        expectedRevision: request.expectedRevision,
+        expiresAt: request.expiresAt,
+        now,
+        approvalId: `approval-${randomUUID()}`,
+      });
+      const stored = { ...approval, checklist: `Ready to publish — ${project.spec.business.name}`, entityType: "studio_release_approval" };
+      await dynamo.send(new TransactWriteCommand({ TransactItems: [
+        { Put: { TableName: tableName, Item: { pk: `TENANT#${identity.merchantId}`, sk: `APPROVAL#${approval.approvalId}`, ...stored }, ConditionExpression: "attribute_not_exists(pk) AND attribute_not_exists(sk)" } },
+        { Put: { TableName: tableName, Item: { pk: `APPROVAL#${approval.approvalId}`, sk: "APPROVAL", ...stored }, ConditionExpression: "attribute_not_exists(pk) AND attribute_not_exists(sk)" } },
+        { Put: { TableName: ledgerTable, Item: { pk: `TENANT#${identity.merchantId}`, sk: `APPROVAL_CREATED#${approval.approvalId}`, eventType: "release_approval_created", approvalId: approval.approvalId, projectId, revision: approval.revision, scopeHash: approval.scopeHash, occurredAt: now }, ConditionExpression: "attribute_not_exists(pk) AND attribute_not_exists(sk)" } },
+      ] }));
+      return studioApprovalView(approval);
     },
     enqueue: async (message) => {
       const ownerWaIdHash = identityHash(message.senderWaId, config.PROOFGATE_SERVICE_SECRET);

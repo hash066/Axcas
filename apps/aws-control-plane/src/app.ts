@@ -1,6 +1,14 @@
 import { Hono } from "hono";
 
 import { extractProofGateApproval, verifyMetaWebhookSignature } from "../../../packages/whatsapp-io/src/meta-webhook";
+import {
+  StudioApiError,
+  StudioApprovalCreateRequestSchema,
+  StudioProjectIdSchema,
+  StudioProjectPatchRequestSchema,
+  type StudioApprovalView,
+  type StudioProjectRevision,
+} from "./studio-api";
 
 export type IngressMessage = {
   rawBody: string;
@@ -20,6 +28,11 @@ export type AwsControlPlaneDependencies = {
   beginMediaUpload?: (input: { authSubject: string; request: unknown }) => Promise<Record<string, unknown>>;
   signMediaPart?: (input: { authSubject: string; assetId: string; request: unknown }) => Promise<Record<string, unknown>>;
   completeMediaUpload?: (input: { authSubject: string; assetId: string; request: unknown }) => Promise<Record<string, unknown>>;
+  getStudioAccount?: (input: { authSubject: string }) => Promise<Record<string, unknown>>;
+  getStudioProject?: (input: { authSubject: string; projectId: string }) => Promise<StudioProjectRevision>;
+  patchStudioProject?: (input: { authSubject: string; projectId: string; request: unknown }) => Promise<StudioProjectRevision>;
+  listStudioApprovals?: (input: { authSubject: string }) => Promise<{ approvals: StudioApprovalView[] }>;
+  createStudioApproval?: (input: { authSubject: string; projectId: string; request: unknown }) => Promise<StudioApprovalView>;
   recordPageView?: (input: { siteId: string; source: string; campaign?: string; cookie?: string }) => Promise<{ setCookie?: string }>;
   trackedRedirect?: (input: { siteId: string; itemId: string; source: string; campaign?: string; cookie?: string }) => Promise<{ location: string; setCookie?: string }>;
   now?: () => number;
@@ -49,7 +62,56 @@ function firstWhatsAppMessage(payload: unknown): { senderWaId: string; providerM
 export function createAwsControlPlaneApp(dependencies: AwsControlPlaneDependencies): Hono {
   const app = new Hono();
 
+  const authenticatedSubject = (value: string | undefined): string => {
+    const subject = value ?? "";
+    if (!/^[A-Za-z0-9:_-]{3,256}$/.test(subject)) throw new StudioApiError("authentication_required", 401);
+    return subject;
+  };
+
+  const jsonBody = async (context: { req: { json: () => Promise<unknown> } }): Promise<unknown> => {
+    try { return await context.req.json(); }
+    catch { throw new StudioApiError("invalid_request", 400); }
+  };
+
   app.get("/health", (context) => context.json({ status: "ok" }, 200, { "cache-control": "no-store" }));
+
+  app.get("/api/studio/me", async (context) => {
+    const authSubject = authenticatedSubject(context.req.header("x-axcas-auth-sub"));
+    if (!dependencies.getStudioAccount) return context.json({ error: "temporarily_unavailable" }, 503, { "cache-control": "no-store" });
+    return context.json(await dependencies.getStudioAccount({ authSubject }), 200, { "cache-control": "no-store" });
+  });
+
+  app.get("/api/studio/projects/:projectId", async (context) => {
+    const authSubject = authenticatedSubject(context.req.header("x-axcas-auth-sub"));
+    const projectId = StudioProjectIdSchema.safeParse(context.req.param("projectId"));
+    if (!projectId.success) throw new StudioApiError("invalid_request", 400);
+    if (!dependencies.getStudioProject) return context.json({ error: "temporarily_unavailable" }, 503, { "cache-control": "no-store" });
+    return context.json(await dependencies.getStudioProject({ authSubject, projectId: projectId.data }), 200, { "cache-control": "no-store" });
+  });
+
+  app.patch("/api/studio/projects/:projectId", async (context) => {
+    const authSubject = authenticatedSubject(context.req.header("x-axcas-auth-sub"));
+    const projectId = StudioProjectIdSchema.safeParse(context.req.param("projectId"));
+    const request = StudioProjectPatchRequestSchema.safeParse(await jsonBody(context));
+    if (!projectId.success || !request.success) throw new StudioApiError("invalid_request", 400);
+    if (!dependencies.patchStudioProject) return context.json({ error: "temporarily_unavailable" }, 503, { "cache-control": "no-store" });
+    return context.json(await dependencies.patchStudioProject({ authSubject, projectId: projectId.data, request: request.data }), 200, { "cache-control": "no-store" });
+  });
+
+  app.get("/api/studio/approvals", async (context) => {
+    const authSubject = authenticatedSubject(context.req.header("x-axcas-auth-sub"));
+    if (!dependencies.listStudioApprovals) return context.json({ error: "temporarily_unavailable" }, 503, { "cache-control": "no-store" });
+    return context.json(await dependencies.listStudioApprovals({ authSubject }), 200, { "cache-control": "no-store" });
+  });
+
+  app.post("/api/studio/projects/:projectId/approvals", async (context) => {
+    const authSubject = authenticatedSubject(context.req.header("x-axcas-auth-sub"));
+    const projectId = StudioProjectIdSchema.safeParse(context.req.param("projectId"));
+    const request = StudioApprovalCreateRequestSchema.safeParse(await jsonBody(context));
+    if (!projectId.success || !request.success) throw new StudioApiError("invalid_request", 400);
+    if (!dependencies.createStudioApproval) return context.json({ error: "temporarily_unavailable" }, 503, { "cache-control": "no-store" });
+    return context.json(await dependencies.createStudioApproval({ authSubject, projectId: projectId.data, request: request.data }), 201, { "cache-control": "no-store" });
+  });
 
   app.get("/e/view/:siteId", async (context) => {
     const siteId = context.req.param("siteId");
@@ -158,6 +220,9 @@ export function createAwsControlPlaneApp(dependencies: AwsControlPlaneDependenci
   });
 
   app.notFound((context) => context.json({ error: "not_found" }, 404));
-  app.onError((_error, context) => context.json({ accepted: false, error: "temporary_failure" }, 503, { "cache-control": "no-store" }));
+  app.onError((error, context) => {
+    if (error instanceof StudioApiError) return context.json({ error: error.code }, error.status, { "cache-control": "no-store" });
+    return context.json({ accepted: false, error: "temporary_failure" }, 503, { "cache-control": "no-store" });
+  });
   return app;
 }
