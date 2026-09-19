@@ -60,7 +60,7 @@ Use `axcas_continue` for `intake`, `policy`, `decision`, `candidate`,
 `axcas_status` only for the merchant's own activity summary. These tools validate the data
 and call the internal boundary. Never call Convex or edit production/release state directly.
 
-If the admin boundary is temporarily unavailable, retain the already received business fields and provider media references in the sender-bound Hermes session and retry automatically after recovery or on the next turn. Send only: “I’ve saved everything you sent. I’m reconnecting and will continue automatically—you do not need to resend anything.” Never show environment-variable names, credential names, provider diagnostics, stack traces, or an operator setup choice to a merchant.
+If the admin boundary is temporarily unavailable, retain the already received business fields and provider media references in the sender-bound Hermes session. Do not claim that an automatic retry has been scheduled unless a durable retry job exists. Send only: “I couldn’t complete this step just now. Please reply RETRY; you won’t need to retype your business details.” Never show environment-variable names, credential names, provider diagnostics, stack traces, or an operator setup choice to a merchant.
 
 The customer-output hook silently suppresses any LLM-authored reply containing technical or
 operator-only language. Do not replace that suppression with an apology, diagnostic, or setup

@@ -10,7 +10,7 @@ import {
 } from "../../strands-orchestrator/src";
 import { assertMerchantSafeText } from "../../../packages/whatsapp-io/src/merchant-language";
 
-export const SAFE_RETRY_MESSAGE = "I’ve saved everything you sent. I’m reconnecting and will continue automatically—you do not need to resend anything.";
+export const SAFE_RETRY_MESSAGE = "I couldn’t complete this step just now. Please reply RETRY; you won’t need to retype your business details.";
 
 const BridgeContextSchema = z.object({
   platform: z.enum(["whatsapp", "whatsapp_cloud"]),

@@ -7,7 +7,7 @@ describe("Axcas Hermes merchant experience", () => {
 
     expect(skill).toContain("`axcas_continue`");
     expect(skill).toContain("`axcas_status`");
-    expect(skill).toContain("I’ve saved everything you sent");
+    expect(skill).toContain("Please reply RETRY");
     expect(skill).toContain("Never show environment-variable names");
     expect(skill).toContain("`notifyCustomer: false`");
     expect(skill).toContain("send no reply for that tool result");

@@ -82,7 +82,10 @@ class MerchantOutputGuardTests(unittest.TestCase):
             "gateway": gateway,
             "gateway.session_context": session_context,
         }):
-            self.assertEqual(self.plugin._filter_llm_output("Cloudflare failed"), "")
+            self.assertEqual(
+                self.plugin._filter_llm_output("Cloudflare failed"),
+                self.plugin.SAFE_NO_TOOL_MESSAGE,
+            )
 
     def test_runtime_hook_blocks_generic_host_tools_on_whatsapp(self):
         gateway = types.ModuleType("gateway")
@@ -125,6 +128,98 @@ class MerchantOutputGuardTests(unittest.TestCase):
             result = json.loads(self.plugin._call_bridge("intake", {}))
         self.assertEqual(result["customerMessage"], self.plugin.SAFE_RETRY_MESSAGE)
         self.assertNotIn("PROOFGATE", json.dumps(result))
+
+    def test_whatsapp_turn_without_axcas_tool_discards_invented_outage(self):
+        invented = (
+            "The service is temporarily unavailable. Your request has been saved "
+            "and the system will automatically reconnect. Would you like help "
+            "reviewing merchant policies?"
+        )
+        self.assertEqual(
+            self.plugin._filter_llm_output(
+                invented,
+                platform="whatsapp_cloud",
+                session_id="session-no-tool",
+            ),
+            self.plugin.SAFE_NO_TOOL_MESSAGE,
+        )
+
+    def test_whatsapp_turn_uses_exact_bridge_customer_message(self):
+        bridge_message = "One quick thing before I build: what prices should I show?"
+        self.plugin._record_axcas_tool_result(
+            "axcas_continue",
+            json.dumps({
+                "status": "accepted",
+                "customerMessage": bridge_message,
+                "notifyCustomer": True,
+            }),
+            session_id="session-with-tool",
+        )
+        self.assertEqual(
+            self.plugin._filter_llm_output(
+                "Here is some unrelated model-written advice.",
+                platform="whatsapp_cloud",
+                session_id="session-with-tool",
+            ),
+            bridge_message,
+        )
+
+    def test_whatsapp_turn_stays_silent_when_bridge_owns_customer_notification(self):
+        self.plugin._record_axcas_tool_result(
+            "axcas_continue",
+            json.dumps({
+                "status": "approval_sent",
+                "customerMessage": "",
+                "notifyCustomer": False,
+            }),
+            session_id="session-silent",
+        )
+        self.assertEqual(
+            self.plugin._filter_llm_output(
+                "I also made another approval message for you.",
+                platform="whatsapp_cloud",
+                session_id="session-silent",
+            ),
+            "",
+        )
+
+    def test_bridge_receipt_is_single_use_and_cannot_leak_to_next_turn(self):
+        self.plugin._record_axcas_tool_result(
+            "axcas_continue",
+            json.dumps({
+                "status": "accepted",
+                "customerMessage": "Photos received. I’m building your draft now.",
+                "notifyCustomer": True,
+            }),
+            session_id="session-reused",
+        )
+        first = self.plugin._filter_llm_output(
+            "model response",
+            platform="whatsapp_cloud",
+            session_id="session-reused",
+        )
+        second = self.plugin._filter_llm_output(
+            "invented follow-up",
+            platform="whatsapp_cloud",
+            session_id="session-reused",
+        )
+        self.assertEqual(first, "Photos received. I’m building your draft now.")
+        self.assertEqual(second, self.plugin.SAFE_NO_TOOL_MESSAGE)
+
+    def test_non_axcas_tool_result_does_not_authorize_whatsapp_model_copy(self):
+        self.plugin._record_axcas_tool_result(
+            "terminal",
+            "ok",
+            session_id="session-wrong-tool",
+        )
+        self.assertEqual(
+            self.plugin._filter_llm_output(
+                "Try Carrd instead.",
+                platform="whatsapp_cloud",
+                session_id="session-wrong-tool",
+            ),
+            self.plugin.SAFE_NO_TOOL_MESSAGE,
+        )
 
 
 if __name__ == "__main__":

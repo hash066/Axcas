@@ -50,7 +50,7 @@ const customerProgressCopy: Partial<Record<WorkflowProgress, string>> = {
   preview_ready: "Your checked preview is ready. Review the details, prices, and WhatsApp button.",
   published: "Your website is live. I’ll keep tracking visits and WhatsApp enquiries here.",
   reel_ready: "Your reel is ready and has been returned here privately.",
-  temporary_retry: "I’ve saved everything you sent. I’m reconnecting and will continue automatically—you do not need to resend anything.",
+  temporary_retry: "I couldn’t complete this step just now. Please reply RETRY; you won’t need to retype your business details.",
 };
 
 /**

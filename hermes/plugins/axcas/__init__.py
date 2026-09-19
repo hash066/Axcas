@@ -12,12 +12,17 @@ import json
 import os
 import re
 import socket
+import threading
 from typing import Any
 
 
 SAFE_RETRY_MESSAGE = (
-    "I’ve saved everything you sent. I’m reconnecting and will continue "
-    "automatically—you do not need to resend anything."
+    "I couldn’t complete this step just now. Please reply RETRY; you won’t "
+    "need to retype your business details."
+)
+SAFE_NO_TOOL_MESSAGE = (
+    "I couldn’t start this step just now. Please reply RETRY; you won’t "
+    "need to retype your business details."
 )
 
 _WHATSAPP_PLATFORMS = frozenset({"whatsapp", "whatsapp_cloud"})
@@ -34,6 +39,14 @@ _ACTIONS = frozenset({
     "reel",
     "orchestrate_build",
 })
+
+# A public WhatsApp reply is allowed only when it is backed by an Axcas tool
+# result from the same Hermes session. The receipt is consumed exactly once by
+# transform_llm_output, so it cannot authorize model-written copy in a later
+# turn. Hermes serializes turns within one session; the lock also protects
+# unrelated merchant sessions handled concurrently by the gateway.
+_TOOL_RECEIPTS: dict[str, tuple[bool, str]] = {}
+_TOOL_RECEIPTS_LOCK = threading.Lock()
 
 # This is a fail-closed customer-output policy, not a best-effort secret masker.
 # LLM-authored technical output is suppressed. A real bridge failure separately returns the
@@ -187,13 +200,75 @@ def _block_non_axcas_tools(tool_name: str, **_kwargs: Any) -> dict[str, str] | N
     return None
 
 
-def _filter_llm_output(response_text: str, platform: str = "", **_kwargs: Any) -> str | None:
+def _record_axcas_tool_result(
+    tool_name: str,
+    result: Any,
+    session_id: str = "",
+    **_kwargs: Any,
+) -> None:
+    """Record the sole customer-visible result authorized for this turn."""
+    if tool_name not in _AXCAS_TOOLS or not session_id:
+        return
+    try:
+        parsed = json.loads(result) if isinstance(result, str) else result
+        if not isinstance(parsed, dict):
+            raise ValueError("invalid Axcas result")
+        notify_customer = parsed.get("notifyCustomer")
+        customer_message = parsed.get("customerMessage")
+        if not isinstance(notify_customer, bool) or not isinstance(customer_message, str):
+            raise ValueError("invalid Axcas result")
+        receipt = (notify_customer, customer_message)
+    except Exception:
+        receipt = (True, SAFE_RETRY_MESSAGE)
+    receipt_key = _receipt_key(session_id)
+    with _TOOL_RECEIPTS_LOCK:
+        # A response-less turn must not leave a receipt that can authorize the
+        # next inbound message. Keep at most one receipt per Hermes session.
+        prefix = f"{session_id}:"
+        for key in tuple(_TOOL_RECEIPTS):
+            if key == session_id or key.startswith(prefix):
+                _TOOL_RECEIPTS.pop(key, None)
+        _TOOL_RECEIPTS[receipt_key] = receipt
+
+
+def _receipt_key(session_id: str) -> str:
+    try:
+        from gateway.session_context import get_session_env
+
+        message_id = get_session_env("HERMES_SESSION_MESSAGE_ID", "")
+    except Exception:
+        message_id = ""
+    return f"{session_id}:{message_id}" if message_id else session_id
+
+
+def _consume_tool_receipt(session_id: str) -> tuple[bool, str] | None:
+    if not session_id:
+        return None
+    with _TOOL_RECEIPTS_LOCK:
+        return _TOOL_RECEIPTS.pop(_receipt_key(session_id), None)
+
+
+def _filter_llm_output(
+    response_text: str,
+    platform: str = "",
+    session_id: str = "",
+    **_kwargs: Any,
+) -> str | None:
     if not platform:
         try:
             from gateway.session_context import get_session_env
             platform = get_session_env("HERMES_SESSION_PLATFORM", "")
         except Exception:
             platform = ""
+    if platform in _WHATSAPP_PLATFORMS:
+        receipt = _consume_tool_receipt(session_id)
+        if receipt is None:
+            return SAFE_NO_TOOL_MESSAGE
+        notify_customer, customer_message = receipt
+        if not notify_customer:
+            return ""
+        filtered_receipt = filter_customer_output(customer_message, platform)
+        return filtered_receipt if filtered_receipt == customer_message else SAFE_RETRY_MESSAGE
     filtered = filter_customer_output(response_text, platform)
     return filtered if filtered != response_text else None
 
@@ -240,4 +315,5 @@ def register(ctx: Any) -> None:
         description="Read a typed Axcas activity summary.",
     )
     ctx.register_hook("pre_tool_call", _block_non_axcas_tools)
+    ctx.register_hook("post_tool_call", _record_axcas_tool_result)
     ctx.register_hook("transform_llm_output", _filter_llm_output)
