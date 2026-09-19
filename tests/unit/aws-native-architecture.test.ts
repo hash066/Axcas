@@ -6,6 +6,7 @@ const controlPlaneDockerfile = new URL("../../infra/aws-native/Dockerfile.contro
 const workerDockerfile = new URL("../../infra/aws-native/Dockerfile.worker", import.meta.url);
 const hermesDockerfile = new URL("../../infra/aws-native/Dockerfile.hermes", import.meta.url);
 const hermesConfig = new URL("../../infra/aws-native/hermes-config.yaml", import.meta.url);
+const hermesPublicChannelPatch = new URL("../../infra/aws-native/hermes-public-channel.patch", import.meta.url);
 const deployScript = new URL("../../infra/aws-native/deploy.ps1", import.meta.url);
 const productionGate = new URL("../../.github/workflows/production-gate.yml", import.meta.url);
 
@@ -81,6 +82,8 @@ describe("AWS-native production architecture", () => {
     expect(hermes).toContain('test "$(git -C /opt/hermes rev-parse HEAD)" = "${HERMES_GIT_REF}"');
     expect(hermes).toContain('org.opencontainers.image.version="0.18.2"');
     expect(hermes).toContain("hermes/plugins/axcas");
+    expect(hermes).toContain("hermes-public-channel.patch");
+    expect(hermes).toContain("git -C /opt/hermes apply");
     expect(hermes).toContain('CMD ["hermes", "gateway", "run"]');
     expect(template).toContain("Command: [hermes, gateway, run]");
     expect(template).not.toContain("Command: [hermes, --gateway]");
@@ -91,6 +94,15 @@ describe("AWS-native production architecture", () => {
     expect(template).toContain("PathPattern: 'r/*'");
     expect(template).toContain("Name: WHATSAPP_CLOUD_ACCESS_TOKEN");
     expect(template).not.toContain("AXCAS_PROVIDER_SECRET_JSON");
+  });
+
+  it("keeps Hermes operator onboarding out of the public WhatsApp channel", () => {
+    const patch = readFileSync(hermesPublicChannelPatch, "utf8");
+
+    expect(patch).toContain("Platform.WHATSAPP_CLOUD");
+    expect(patch).toContain("public customer channel");
+    expect(patch).toContain("source.platform not in");
+    expect(patch).toContain("Platform.WEBHOOK");
   });
 
   it("runs Hermes through Bedrock with task-role credentials and streaming permission", () => {

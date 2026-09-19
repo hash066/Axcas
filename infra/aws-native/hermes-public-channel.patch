@@ -1,0 +1,20 @@
+diff --git a/gateway/run.py b/gateway/run.py
+index 9497f74..60f7ea8 100644
+--- a/gateway/run.py
++++ b/gateway/run.py
+@@ -11397,6 +11397,14 @@
+         # One-time prompt if no home channel is set for this platform
+         # Skip for webhooks - they deliver directly to configured targets (github_comment, etc.)
+-        if not history and source.platform and source.platform != Platform.LOCAL and source.platform != Platform.WEBHOOK:
++        # WhatsApp Cloud is an Axcas public customer channel, not an operator's
++        # personal Hermes installation. A global home channel would also be
++        # incorrect for a multi-tenant gateway, so do not expose /sethome setup
++        # instructions to merchants on first contact.
++        if (
++            not history
++            and source.platform
++            and source.platform not in {Platform.LOCAL, Platform.WEBHOOK, Platform.WHATSAPP_CLOUD}
++        ):
+             platform_name = source.platform.value
+             env_key = _home_target_env_var(platform_name)
+             if not os.getenv(env_key):

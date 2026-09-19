@@ -602,3 +602,10 @@ superseded by the 2026-08-08 provider foundation update above.
 - The passing development Spike B binds the consent-receipt reference, canonical Telegram recipient hash, provider message ID, signed session, exact quantity, immutable version/spec hash, and external merchant acknowledgment. Team/local actions still cannot satisfy the real-witness predicate.
 - Preserved Spike A failure: `evidence/spike-a/failures.ndjson` records an actual transient HTTP 500 on attempt 2 before the successful three-run sequence.
 - Historical quick tunnel `https://rides-min-logos-finger.trycloudflare.com` served the old Saturday Sessions page on 2026-07-12. It was ephemeral and is not current ProofGate evidence.
+
+## 2026-09-19 production WhatsApp first-contact acceptance
+
+- **Observed failure:** an unallowlisted phone successfully reached the production Meta number `+91 91804 99647`, proving signed inbound delivery and outbound provider delivery, but pinned Hermes `v0.18.2` sent its operator-only “No home channel is set” `/sethome` notice before Axcas onboarding. This is customer-visible failure evidence, not a passed journey.
+- **Root cause:** Hermes gateway first-contact onboarding treats every messaging surface as a personal assistant installation. Axcas WhatsApp Cloud is instead a multi-tenant public customer channel, where a single global home channel is invalid.
+- **Source correction:** `infra/aws-native/hermes-public-channel.patch` removes only that notice for `Platform.WHATSAPP_CLOUD`; the pinned upstream commit remains unchanged otherwise. `Dockerfile.hermes` checks and applies the patch during the immutable image build.
+- **Verification before deployment:** the patch applies cleanly to exact Hermes commit `88a58ff1355eabe468b4dcd4e152a596932632e6`; the focused AWS architecture suite passes 12/12, the full suite passes 3 legacy + 343 Vitest + 12 Hermes plugin + 8 AWS media tests, and both TypeScript checks pass. Live first-contact acceptance must be repeated after the corrected image is deployed before this gate can pass.

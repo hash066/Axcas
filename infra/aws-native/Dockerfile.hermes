@@ -18,6 +18,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ffmpeg ca-c
     && useradd --uid 10002 --gid 10000 --create-home --home-dir /var/lib/hermes --shell /usr/sbin/nologin hermes \
     && mkdir -p /var/lib/hermes/plugins/axcas /var/lib/hermes/skills/proofgate /run/axcas
 
+COPY infra/aws-native/hermes-public-channel.patch /tmp/hermes-public-channel.patch
+RUN git -C /opt/hermes apply --check /tmp/hermes-public-channel.patch \
+    && git -C /opt/hermes apply /tmp/hermes-public-channel.patch \
+    && rm /tmp/hermes-public-channel.patch
+
 COPY hermes/plugins/axcas /var/lib/hermes/plugins/axcas
 COPY hermes/skills/proofgate /var/lib/hermes/skills/proofgate
 COPY infra/aws-native/hermes-config.yaml /var/lib/hermes/config.yaml
