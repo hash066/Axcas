@@ -91,6 +91,7 @@ describe("AWS Amplify Studio frontend", () => {
     window.eval(files["studio.js"]);
     window.document.querySelector<HTMLButtonElement>("#studioModeButton")!.click();
     window.document.querySelector<HTMLButtonElement>("#linkButton")!.click();
+    expect(window.document.querySelector("#linkStatus")!.textContent).toBe("Enter your number to receive the code.");
     const form = window.document.querySelector<HTMLFormElement>("#awsSignInForm")!;
     const phone = form.elements.namedItem("phone") as HTMLInputElement;
     phone.value = "+91 98765 43210";
