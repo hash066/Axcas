@@ -58,6 +58,11 @@ class MerchantOutputGuardTests(unittest.TestCase):
         self.assert_blocked("Please approve this shell command so I can configure the backend credentials.")
         self.assert_blocked("The database connection is missing. Ask your operator to set up the server.")
 
+    def test_blocks_diy_site_builder_deflection(self):
+        self.assert_blocked("Go to carrd.co, choose a free template, and build the site yourself.")
+        self.assert_blocked("You can make this in Wix or Squarespace in under ten minutes.")
+        self.assert_blocked("Would you prefer to try creating the website yourself first?")
+
     def test_leaves_normal_customer_copy_unchanged(self):
         message = "Your checked preview is ready. Open it and approve when the details look right."
         self.assertEqual(self.plugin.filter_customer_output(message, "whatsapp_cloud"), message)

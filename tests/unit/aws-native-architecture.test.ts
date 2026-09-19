@@ -106,6 +106,20 @@ describe("AWS-native production architecture", () => {
     expect(patch).toContain("source.platform != Platform.WHATSAPP_CLOUD");
     expect(patch).toContain("You are Axcas, the WhatsApp-first growth agent");
     expect(patch).toContain("Never offer a personal profile");
+    expect(patch).toContain("Never recommend Carrd, Wix, Squarespace, or another site builder");
+    expect(patch).toContain("call axcas_continue before replying");
+  });
+
+  it("ships the Axcas BRAG-derived creative director without executable customer compositions", () => {
+    const dockerfile = readFileSync(hermesDockerfile, "utf8");
+    const skill = readFileSync(new URL("../../hermes/skills/axcas-brag/SKILL.md", import.meta.url), "utf8");
+
+    expect(dockerfile).toContain("hermes/skills/axcas-brag");
+    expect(skill).toContain("BRAG-derived creative director");
+    expect(skill).toContain("Hook (2–3s) → Reveal (2–4s)");
+    expect(skill).toContain("merchant-owned media");
+    expect(skill).toContain("never emit HTML, CSS, JavaScript");
+    expect(skill).toContain("Copyright (c) 2026 Shunit Haviv Hakimi");
   });
 
   it("decodes native WhatsApp images before invoking Bedrock", () => {

@@ -23,6 +23,16 @@ export const initialReelPlan = ReelPlanSchema.parse({
   caption: "Made to order in Bengaluru. Message us on WhatsApp.",
   cta: "Order on WhatsApp",
   claims: ["Made to order"],
+  creativeDirection: {
+    source: "axcas-brag-v1",
+    tone: "polished",
+    format: "vertical",
+    structure: "hook-reveal-proof-cta",
+    hookDeadlineMs: 2_000,
+    posterSceneIndex: 1,
+    motion: ["punch_in", "slow_push", "hold"],
+    audioPolicy: "merchant_or_licensed_only",
+  },
   status: "approved",
 });
 
@@ -49,6 +59,27 @@ function ffmpegTextPath(filePath: string): string {
   return filePath.replace(/\\/g, "/").replace(/:/g, "\\:").replace(/'/g, "\\'");
 }
 
+export function buildReelFilterGraph(planInput: ReelPlanV1, textFiles: string[]): string {
+  const plan = ReelPlanSchema.parse(planInput);
+  if (textFiles.length !== plan.scenes.length) throw new Error("every reel scene needs one safe overlay file");
+  const filters: string[] = [];
+  for (let index = 0; index < plan.scenes.length; index += 1) {
+    const scene = plan.scenes[index];
+    const seconds = scene.durationMs / 1000;
+    const motion = plan.creativeDirection?.motion[index] ?? "hold";
+    const zoom = motion === "punch_in" ? "min(zoom+0.0035,1.12)" : motion === "slow_push" ? "min(zoom+0.0015,1.08)" : "1.0";
+    filters.push(
+      `[${index}:v]scale=1200:2134:force_original_aspect_ratio=increase,crop=1200:2134,` +
+      `zoompan=z='${zoom}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=30,` +
+      `setsar=1,drawbox=x=64:y=1440:w=952:h=360:color=black@0.48:t=fill,` +
+      `drawtext=textfile='${ffmpegTextPath(textFiles[index])}':fontcolor=white:fontsize=62:line_spacing=14:x=(w-text_w)/2:y=1510,` +
+      `fade=t=in:st=0:d=0.25,fade=t=out:st=${Math.max(0, seconds - 0.25)}:d=0.25[v${index}]`,
+    );
+  }
+  filters.push(`${plan.scenes.map((_, index) => `[v${index}]`).join("")}concat=n=${plan.scenes.length}:v=1:a=0[vout]`);
+  return filters.join(";");
+}
+
 export async function renderReel(input: {
   plan: ReelPlanV1;
   assetPaths: Record<string, string>;
@@ -69,16 +100,14 @@ export async function renderReel(input: {
     const audioIndex = assets.length;
     if (input.voiceoverPath) args.push("-i", path.resolve(input.voiceoverPath));
     else args.push("-f", "lavfi", "-t", String(duration), "-i", "anullsrc=channel_layout=stereo:sample_rate=44100");
-    const filters: string[] = [];
+    const textFiles: string[] = [];
     for (let index = 0; index < plan.scenes.length; index += 1) {
       const scene = plan.scenes[index];
       const textFile = path.join(working, `scene-${index}.txt`);
       await writeFile(textFile, scene.overlay, "utf8");
-      const seconds = scene.durationMs / 1000;
-      filters.push(`[${index}:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1,drawbox=x=80:y=1480:w=920:h=300:color=black@0.45:t=fill,drawtext=textfile='${ffmpegTextPath(textFile)}':fontcolor=white:fontsize=62:line_spacing=14:x=(w-text_w)/2:y=1540,fade=t=in:st=0:d=0.35,fade=t=out:st=${Math.max(0, seconds - 0.35)}:d=0.35[v${index}]`);
+      textFiles.push(textFile);
     }
-    filters.push(`${plan.scenes.map((_, index) => `[v${index}]`).join("")}concat=n=${plan.scenes.length}:v=1:a=0[vout]`);
-    args.push("-filter_complex", filters.join(";"), "-map", "[vout]", "-map", `${audioIndex}:a`, "-t", String(duration), "-r", "30", "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", path.resolve(input.outputPath));
+    args.push("-filter_complex", buildReelFilterGraph(plan, textFiles), "-map", "[vout]", "-map", `${audioIndex}:a`, "-t", String(duration), "-r", "30", "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", path.resolve(input.outputPath));
     await execFileAsync(input.ffmpegPath ?? "ffmpeg", args, { windowsHide: true, maxBuffer: 1024 * 1024 * 8 });
     return { outputPath: path.resolve(input.outputPath), durationSeconds: duration };
   } finally {

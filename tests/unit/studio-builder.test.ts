@@ -82,6 +82,16 @@ describe("Studio website builder", () => {
     expect(result.plan.scenes).toHaveLength(3);
     expect(result.plan.scenes.reduce((sum, scene) => sum + scene.durationMs, 0)).toBe(15_000);
     expect(new Set(result.plan.scenes.map((scene) => scene.assetId))).toEqual(new Set(["merchant-photo-one", "merchant-photo-two"]));
+    expect(result.plan.creativeDirection).toEqual({
+      source: "axcas-brag-v1",
+      tone: "polished",
+      format: "vertical",
+      structure: "hook-reveal-proof-cta",
+      hookDeadlineMs: 2_000,
+      posterSceneIndex: 1,
+      motion: ["punch_in", "slow_push", "hold"],
+      audioPolicy: "merchant_or_licensed_only",
+    });
     expect(result.recommendations).toEqual({ status: "insufficient_signal", signals: [] });
   });
 

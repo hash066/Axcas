@@ -142,6 +142,17 @@ export const CallOutcomeSchema = z.object({
 
 export type CallOutcomeV1 = z.infer<typeof CallOutcomeSchema>;
 
+export const ReelCreativeDirectionSchema = z.object({
+  source: z.literal("axcas-brag-v1"),
+  tone: z.enum(["default", "polished", "cinematic", "deadpan", "energetic"]),
+  format: z.literal("vertical"),
+  structure: z.literal("hook-reveal-proof-cta"),
+  hookDeadlineMs: z.literal(2_000),
+  posterSceneIndex: z.number().int().min(0).max(5),
+  motion: z.array(z.enum(["punch_in", "slow_push", "hold"])).min(3).max(6),
+  audioPolicy: z.literal("merchant_or_licensed_only"),
+});
+
 export const ReelPlanSchema = z.object({
   schemaVersion: z.literal(1),
   reelId: slug,
@@ -153,9 +164,18 @@ export const ReelPlanSchema = z.object({
   caption: safeText,
   cta: safeText,
   claims: z.array(safeText).max(12),
+  creativeDirection: ReelCreativeDirectionSchema.optional(),
   status: z.enum(["draft", "approved", "rendering", "rendered", "delivering", "delivered", "delivery_failed"]),
-}).refine((plan) => plan.scenes.reduce((total, scene) => total + scene.durationMs, 0) >= 12_000, {
-  message: "reel must be at least 12 seconds",
+}).superRefine((plan, context) => {
+  if (plan.scenes.reduce((total, scene) => total + scene.durationMs, 0) < 12_000) {
+    context.addIssue({ code: "custom", message: "reel must be at least 12 seconds" });
+  }
+  if (plan.creativeDirection && plan.creativeDirection.motion.length !== plan.scenes.length) {
+    context.addIssue({ code: "custom", path: ["creativeDirection", "motion"], message: "motion cue count must match scene count" });
+  }
+  if (plan.creativeDirection && plan.creativeDirection.posterSceneIndex >= plan.scenes.length) {
+    context.addIssue({ code: "custom", path: ["creativeDirection", "posterSceneIndex"], message: "poster scene must exist" });
+  }
 });
 
 export type ReelPlanV1 = z.infer<typeof ReelPlanSchema>;

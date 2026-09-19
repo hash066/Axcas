@@ -212,6 +212,16 @@ export function buildStudioReelPlan(
     caption: `${project.layerOverrides.proof}. ${project.layerOverrides.cta}.`,
     cta: project.layerOverrides.cta,
     claims: project.suppliedClaims,
+    creativeDirection: {
+      source: "axcas-brag-v1",
+      tone: project.layerOverrides.pacing === "fast" ? "polished" : "default",
+      format: "vertical",
+      structure: "hook-reveal-proof-cta",
+      hookDeadlineMs: 2_000,
+      posterSceneIndex: 1,
+      motion: ["punch_in", "slow_push", "hold"],
+      audioPolicy: "merchant_or_licensed_only",
+    },
     status: "draft",
   });
   return { plan, recommendations };

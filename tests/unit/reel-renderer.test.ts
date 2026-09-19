@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import path from "node:path";
 
-import { initialReelPlan, reelDurationSeconds, validateRenderInputs } from "../../apps/reel-worker/src/render";
+import { buildReelFilterGraph, initialReelPlan, reelDurationSeconds, validateRenderInputs } from "../../apps/reel-worker/src/render";
 
 describe("reel renderer", () => {
   it("pins the approved vertical-video format and exact scene duration", () => {
@@ -18,5 +18,13 @@ describe("reel renderer", () => {
   it("rejects unapproved assets and path traversal", () => {
     const assetRoot = path.resolve("fixtures", "reel-assets");
     expect(() => validateRenderInputs(initialReelPlan, { "cake-1": path.resolve(assetRoot, "..", "secret.jpg") }, assetRoot)).toThrow();
+  });
+
+  it("turns approved creative-direction motion into a deterministic vertical filter graph", () => {
+    const graph = buildReelFilterGraph(initialReelPlan, ["one.txt", "two.txt", "three.txt"]);
+    expect(graph).toContain("zoompan=");
+    expect(graph).toContain("1080x1920");
+    expect(graph).toContain("concat=n=3:v=1:a=0[vout]");
+    expect(graph).not.toMatch(/https?:|javascript:|movie=/i);
   });
 });
