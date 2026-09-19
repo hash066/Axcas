@@ -113,7 +113,8 @@ describe("AWS-native production architecture", () => {
     const workerTask = cloudFormationResource(template, "WorkerTask");
 
     expect(config).toContain("provider: bedrock");
-    expect(config).toContain("default: global.anthropic.claude-haiku-4-5-20251001-v1:0");
+    expect(config).toContain("default: global.amazon.nova-2-lite-v1:0");
+    expect(config).toContain("provider_filter:\n      - amazon");
     expect(config).toContain("base_url: https://bedrock-runtime.ap-south-1.amazonaws.com");
     expect(config).toContain("region: ap-south-1");
     expect(dockerfile).toContain('pip install --no-cache-dir "/opt/hermes[messaging,bedrock,anthropic]"');

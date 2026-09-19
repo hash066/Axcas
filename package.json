@@ -31,7 +31,7 @@
     "verify:spike-a": "tsx apps/verifier-runner/src/spike-a.ts",
     "spike:b:dispatch": "tsx apps/spike-b-dispatcher/src/run.ts",
     "test:legacy": "node --test tests/integration/server.test.js tests/unit/booking.test.js",
-    "test:unit": "vitest run --exclude='tests/**/*.test.js'",
+    "test:unit": "vitest run --exclude='tests/**/*.test.js' --exclude='tmp/**'",
     "test:hermes-plugin": "python tests/hermes_plugin_test.py",
     "test:aws-media": "python tests/aws_merchant_media_lambda_test.py",
     "test": "npm run test:legacy && npm run test:unit && npm run test:hermes-plugin && npm run test:aws-media",

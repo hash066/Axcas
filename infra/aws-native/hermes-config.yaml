@@ -1,5 +1,5 @@
 model:
-  default: global.anthropic.claude-haiku-4-5-20251001-v1:0
+  default: global.amazon.nova-2-lite-v1:0
   provider: bedrock
   base_url: https://bedrock-runtime.ap-south-1.amazonaws.com
 bedrock:
@@ -7,7 +7,7 @@ bedrock:
   discovery:
     enabled: true
     provider_filter:
-      - anthropic
+      - amazon
     refresh_interval: 3600
 plugins:
   enabled:
