@@ -70,8 +70,11 @@ describe("AWS-native production architecture", () => {
     expect(controlPlane).toContain("--outfile=/out/handler.js");
     expect(controlPlane).not.toContain("--format=esm");
     expect(readFileSync(workerDockerfile, "utf8")).toContain("ffmpeg");
-    expect(readFileSync(workerDockerfile, "utf8")).toContain("--format=cjs");
-    expect(readFileSync(workerDockerfile, "utf8")).not.toContain("--format=esm");
+    const worker = readFileSync(workerDockerfile, "utf8");
+    expect(worker).toContain("--format=esm");
+    expect(worker).toContain("--packages=external");
+    expect(worker).toContain("npm prune --omit=dev --ignore-scripts");
+    expect(worker).toContain("COPY --from=build /workspace/node_modules ./node_modules");
     const hermes = readFileSync(hermesDockerfile, "utf8");
     expect(hermes).toContain("HERMES_GIT_REF=88a58ff1355eabe468b4dcd4e152a596932632e6");
     expect(hermes).toContain('git -C /opt/hermes fetch --depth 1 origin "${HERMES_GIT_REF}"');
