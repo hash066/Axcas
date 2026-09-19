@@ -32,8 +32,8 @@ index 54f38d1..0a2c1a1 100644
 +    if platform_name == "whatsapp_cloud":
 +        logger.error("Axcas provider request failed on public WhatsApp: %s", text)
 +        return (
-+            "I received what you sent. I hit a temporary issue and will retry "
-+            "automatically—you do not need to resend anything."
++            "I received what you sent but couldn’t finish just now. "
++            "Please try again in a moment."
 +        )
 +    return _gateway_provider_error_reply(text)
 +

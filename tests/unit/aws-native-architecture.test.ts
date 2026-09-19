@@ -121,7 +121,7 @@ describe("AWS-native production architecture", () => {
     const patch = readFileSync(hermesPublicChannelPatch, "utf8");
 
     expect(patch).toContain("Axcas provider request failed on public WhatsApp");
-    expect(patch).toContain("I received what you sent. I hit a temporary issue and will retry");
+    expect(patch).toContain("I received what you sent but couldn’t finish just now");
     expect(patch).not.toContain("check gateway logs for diagnostics");
   });
 
