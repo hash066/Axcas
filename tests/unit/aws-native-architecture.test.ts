@@ -103,6 +103,26 @@ describe("AWS-native production architecture", () => {
     expect(patch).toContain("public customer channel");
     expect(patch).toContain("source.platform not in");
     expect(patch).toContain("Platform.WEBHOOK");
+    expect(patch).toContain("source.platform != Platform.WHATSAPP_CLOUD");
+    expect(patch).toContain("You are Axcas, the WhatsApp-first growth agent");
+    expect(patch).toContain("Never offer a personal profile");
+  });
+
+  it("decodes native WhatsApp images before invoking Bedrock", () => {
+    const patch = readFileSync(hermesPublicChannelPatch, "utf8");
+
+    expect(patch).toContain("import base64");
+    expect(patch).toContain("base64.b64decode(data, validate=True)");
+    expect(patch).toContain('"source": {"bytes": image_bytes}');
+    expect(patch).toContain('"jpg": "jpeg"');
+  });
+
+  it("keeps provider diagnostics operator-only on the public WhatsApp channel", () => {
+    const patch = readFileSync(hermesPublicChannelPatch, "utf8");
+
+    expect(patch).toContain("Axcas provider request failed on public WhatsApp");
+    expect(patch).toContain("I received what you sent. I hit a temporary issue and will retry");
+    expect(patch).not.toContain("check gateway logs for diagnostics");
   });
 
   it("runs Hermes through Bedrock with task-role credentials and streaming permission", () => {

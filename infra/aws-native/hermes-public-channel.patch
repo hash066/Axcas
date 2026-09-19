@@ -1,9 +1,75 @@
+diff --git a/agent/bedrock_adapter.py b/agent/bedrock_adapter.py
+index d5dab7b..0f732f1 100644
+--- a/agent/bedrock_adapter.py
++++ b/agent/bedrock_adapter.py
+@@ -30 +30,2 @@ Requires: ``boto3`` (optional dependency — only needed when using the Bedrock
++import base64
+ import json
+@@ -530,6 +531,13 @@ def _convert_content_to_converse(content) -> List[Dict]:
+                             media_type = mime_part
++                    try:
++                        image_bytes = base64.b64decode(data, validate=True)
++                    except (ValueError, TypeError):
++                        blocks.append({"text": "[Image attachment could not be decoded.]"})
++                        continue
++                    image_format = media_type.split("/")[-1] if "/" in media_type else "jpeg"
++                    image_format = {"jpg": "jpeg"}.get(image_format.lower(), image_format.lower())
+                     blocks.append({
+                         "image": {
+-                            "format": media_type.split("/")[-1] if "/" in media_type else "jpeg",
+-                            "source": {"bytes": data},
++                            "format": image_format,
++                            "source": {"bytes": image_bytes},
+                         }
 diff --git a/gateway/run.py b/gateway/run.py
-index 9497f74..60f7ea8 100644
+index 54f38d1..0a2c1a1 100644
 --- a/gateway/run.py
 +++ b/gateway/run.py
-@@ -11397,6 +11397,14 @@
-         # One-time prompt if no home channel is set for this platform
+@@ -376 +376,13 @@ def _gateway_provider_error_reply(text: str) -> str:
++def _gateway_provider_error_reply_for_platform(platform: Any, text: str) -> str:
++    """Keep infrastructure diagnostics out of the public Axcas conversation."""
++    platform_name = str(getattr(platform, "value", platform) or "").strip().lower()
++    if platform_name == "whatsapp_cloud":
++        logger.error("Axcas provider request failed on public WhatsApp: %s", text)
++        return (
++            "I received what you sent. I hit a temporary issue and will retry "
++            "automatically—you do not need to resend anything."
++        )
++    return _gateway_provider_error_reply(text)
++
++
+ _GATEWAY_PROVIDER_ERROR_SHAPE_RE = re.compile(
+@@ -435,3 +447,3 @@ def _sanitize_gateway_final_response(platform: Any, text: str) -> str:
+     if _looks_like_gateway_provider_error(redacted):
+-        return _gateway_provider_error_reply(redacted)
++        return _gateway_provider_error_reply_for_platform(platform, redacted)
+     return redacted
+@@ -455,3 +467,3 @@ def _prepare_gateway_status_message(platform: Any, event_type: str, message: str
+     if _looks_like_gateway_provider_error(text):
+-        return _gateway_provider_error_reply(text)
++        return _gateway_provider_error_reply_for_platform(platform, text)
+     return text
+@@ -11359,3 +11371,18 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
++        if source.platform == Platform.WHATSAPP_CLOUD:
++            context_prompt = (
++                "[System note: You are Axcas, the WhatsApp-first growth agent for "
++                "small businesses. Never offer a personal profile, generic assistance, "
++                "or infrastructure setup. Treat START AXCAS, a greeting, or a business "
++                "description as Axcas onboarding. Use the installed proofgate skill and "
++                "only axcas_continue/axcas_status tools. Ask Website, Reels, or Both only "
++                "when the desired outcome is missing. Keep merchant replies concise and "
++                "non-technical.]\n\n" + context_prompt
++            )
++
+         # First-message onboarding -- only on the very first interaction ever
+-        if not history and not self.session_store.has_any_sessions():
++        if (
++            not history
++            and not self.session_store.has_any_sessions()
++            and source.platform != Platform.WHATSAPP_CLOUD
++        ):
+             # Default first-contact note: a brief self-introduction.
+@@ -11398,3 +11425,11 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
          # Skip for webhooks - they deliver directly to configured targets (github_comment, etc.)
 -        if not history and source.platform and source.platform != Platform.LOCAL and source.platform != Platform.WEBHOOK:
 +        # WhatsApp Cloud is an Axcas public customer channel, not an operator's
@@ -16,5 +82,3 @@ index 9497f74..60f7ea8 100644
 +            and source.platform not in {Platform.LOCAL, Platform.WEBHOOK, Platform.WHATSAPP_CLOUD}
 +        ):
              platform_name = source.platform.value
-             env_key = _home_target_env_var(platform_name)
-             if not os.getenv(env_key):
