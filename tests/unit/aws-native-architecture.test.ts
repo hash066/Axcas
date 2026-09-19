@@ -5,6 +5,7 @@ const templatePath = new URL("../../infra/aws-native/template.yaml", import.meta
 const controlPlaneDockerfile = new URL("../../infra/aws-native/Dockerfile.control-plane", import.meta.url);
 const workerDockerfile = new URL("../../infra/aws-native/Dockerfile.worker", import.meta.url);
 const hermesDockerfile = new URL("../../infra/aws-native/Dockerfile.hermes", import.meta.url);
+const hermesConfig = new URL("../../infra/aws-native/hermes-config.yaml", import.meta.url);
 const deployScript = new URL("../../infra/aws-native/deploy.ps1", import.meta.url);
 const productionGate = new URL("../../.github/workflows/production-gate.yml", import.meta.url);
 
@@ -85,6 +86,45 @@ describe("AWS-native production architecture", () => {
     expect(template).toContain("PathPattern: 'r/*'");
     expect(template).toContain("Name: WHATSAPP_CLOUD_ACCESS_TOKEN");
     expect(template).not.toContain("AXCAS_PROVIDER_SECRET_JSON");
+  });
+
+  it("runs Hermes through Bedrock with task-role credentials and streaming permission", () => {
+    const template = readFileSync(templatePath, "utf8");
+    const dockerfile = readFileSync(hermesDockerfile, "utf8");
+    const config = readFileSync(hermesConfig, "utf8");
+    const workerRole = cloudFormationResource(template, "WorkerTaskRole");
+    const workerTask = cloudFormationResource(template, "WorkerTask");
+
+    expect(config).toContain("provider: bedrock");
+    expect(config).toContain("default: global.anthropic.claude-haiku-4-5-20251001-v1:0");
+    expect(config).toContain("base_url: https://bedrock-runtime.ap-south-1.amazonaws.com");
+    expect(config).toContain("region: ap-south-1");
+    expect(dockerfile).toContain('pip install --no-cache-dir "/opt/hermes[messaging,bedrock,anthropic]"');
+    expect(workerRole).toContain("bedrock:InvokeModel");
+    expect(workerRole).toContain("bedrock:InvokeModelWithResponseStream");
+    expect(workerRole).toContain("bedrock:ListFoundationModels");
+    expect(workerRole).toContain("bedrock:ListInferenceProfiles");
+    expect(template).not.toContain("OPENROUTER_API_KEY");
+  });
+
+  it("initializes the shared Fargate socket volume before distinct non-root runtimes start", () => {
+    const template = readFileSync(templatePath, "utf8");
+    const workerTask = cloudFormationResource(template, "WorkerTask");
+    const worker = readFileSync(workerDockerfile, "utf8");
+    const hermes = readFileSync(hermesDockerfile, "utf8");
+
+    expect(worker).toContain("groupadd --gid 10000 axcas-runtime");
+    expect(worker).toContain("useradd --uid 10001 --gid 10000");
+    expect(hermes).toContain("groupadd --gid 10000 axcas-runtime");
+    expect(hermes).toContain("useradd --uid 10002 --gid 10000");
+    expect(workerTask).toContain("- Name: runtime-init");
+    expect(workerTask).toContain("User: '0:0'");
+    expect(workerTask).toContain("ReadonlyRootFilesystem: true");
+    expect(workerTask).toContain("Command: [sh, -c, 'chown 0:10000 /run/axcas && chmod 0770 /run/axcas']");
+    expect(workerTask.match(/ContainerName: runtime-init, Condition: SUCCESS/g)).toHaveLength(2);
+    expect(workerTask).toContain("User: '10002:10000'");
+    expect(workerTask.match(/User: '10001:10000'/g)).toHaveLength(2);
+    expect(workerTask).not.toMatch(/chmod\s+0?777/);
   });
 
   it("keeps the always-on Hermes service disabled until provider acceptance", () => {

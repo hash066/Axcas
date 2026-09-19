@@ -10,10 +10,10 @@ RUN npx esbuild apps/hermes-sqs-relay/src/server.ts apps/axcas-tool-bridge/src/s
 FROM node:22-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && groupadd --system axcas \
-    && useradd --system --gid axcas --create-home axcas
+    && groupadd --gid 10000 axcas-runtime \
+    && useradd --uid 10001 --gid 10000 --create-home --shell /usr/sbin/nologin axcas
 WORKDIR /opt/axcas
 COPY --from=build /out/dist ./dist
-RUN mkdir -p /run/axcas && chown -R axcas:axcas /opt/axcas /run/axcas
-USER axcas
+RUN mkdir -p /run/axcas && chown -R 10001:10000 /opt/axcas /run/axcas
+USER 10001:10000
 CMD ["node", "dist/apps/hermes-sqs-relay/src/server.js"]

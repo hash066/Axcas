@@ -59,7 +59,8 @@ The stack initially creates its provider secret with unusable placeholders plus 
 - `WHATSAPP_CLOUD_ACCESS_TOKEN`
 - `WHATSAPP_CLOUD_APP_ID`
 - `WHATSAPP_CLOUD_WABA_ID`
-- `OPENROUTER_API_KEY` (only if Hermes continues to use that inference provider)
+
+Hermes uses AWS Bedrock through the ECS task role; no model-provider API key is stored in the provider secret.
 
 Preserve the generated `PROOFGATE_SERVICE_SECRET` during the replacement. Customers provide none of these values.
 

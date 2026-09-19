@@ -247,7 +247,7 @@ Resources:
       KmsKeyId: !Ref DataKey
       Description: Operator-managed Meta, Bedrock boundary, Vapi, and service credentials; never merchant-visible
       GenerateSecretString:
-        SecretStringTemplate: '{"META_APP_SECRET":"replace-before-provider-acceptance","META_VERIFY_TOKEN":"replace-before-provider-acceptance","WHATSAPP_CLOUD_PHONE_NUMBER_ID":"replace-before-provider-acceptance","WHATSAPP_CLOUD_ACCESS_TOKEN":"replace-before-provider-acceptance","WHATSAPP_CLOUD_APP_ID":"replace-before-provider-acceptance","WHATSAPP_CLOUD_WABA_ID":"replace-before-provider-acceptance","OPENROUTER_API_KEY":"replace-before-provider-acceptance"}'
+        SecretStringTemplate: '{"META_APP_SECRET":"replace-before-provider-acceptance","META_VERIFY_TOKEN":"replace-before-provider-acceptance","WHATSAPP_CLOUD_PHONE_NUMBER_ID":"replace-before-provider-acceptance","WHATSAPP_CLOUD_ACCESS_TOKEN":"replace-before-provider-acceptance","WHATSAPP_CLOUD_APP_ID":"replace-before-provider-acceptance","WHATSAPP_CLOUD_WABA_ID":"replace-before-provider-acceptance"}'
         GenerateStringKey: PROOFGATE_SERVICE_SECRET
         PasswordLength: 64
         ExcludePunctuation: true
@@ -492,7 +492,8 @@ Resources:
               - { Effect: Allow, Action: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:Query'], Resource: [!GetAtt StateTable.Arn, !GetAtt LedgerTable.Arn, !Sub '${StateTable.Arn}/index/*'] }
               - { Effect: Allow, Action: ['s3:GetObject', 's3:PutObject'], Resource: [!Sub '${AssetsBucket.Arn}/*', !Sub '${SitesBucket.Arn}/*', !Sub '${EvidenceBucket.Arn}/*'] }
               - { Effect: Allow, Action: ['kms:Decrypt', 'kms:Encrypt', 'kms:GenerateDataKey'], Resource: !GetAtt DataKey.Arn }
-              - { Effect: Allow, Action: ['bedrock:InvokeModel', 'polly:SynthesizeSpeech'], Resource: '*' }
+              - { Effect: Allow, Action: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream', 'polly:SynthesizeSpeech'], Resource: '*' }
+              - { Effect: Allow, Action: ['bedrock:ListFoundationModels', 'bedrock:ListInferenceProfiles'], Resource: '*' }
 
   WorkerLogGroup:
     Type: AWS::Logs::LogGroup
@@ -511,9 +512,21 @@ Resources:
       ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
       TaskRoleArn: !GetAtt WorkerTaskRole.Arn
       ContainerDefinitions:
+        - Name: runtime-init
+          Image: !Ref WorkerImageUri
+          Essential: false
+          User: '0:0'
+          ReadonlyRootFilesystem: true
+          Command: [sh, -c, 'chown 0:10000 /run/axcas && chmod 0770 /run/axcas']
+          MountPoints: [{ SourceVolume: axcas-runtime, ContainerPath: /run/axcas, ReadOnly: false }]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options: { awslogs-group: !Ref WorkerLogGroup, awslogs-region: !Ref 'AWS::Region', awslogs-stream-prefix: runtime-init }
         - Name: hermes
           Image: !Ref HermesImageUri
           Essential: true
+          User: '10002:10000'
+          DependsOn: [{ ContainerName: runtime-init, Condition: SUCCESS }]
           Command: [hermes, gateway, run]
           Environment:
             - { Name: WHATSAPP_CLOUD_ALLOW_ALL_USERS, Value: 'true' }
@@ -529,7 +542,6 @@ Resources:
             - { Name: WHATSAPP_CLOUD_APP_SECRET, ValueFrom: !Sub '${ProviderSecrets}:META_APP_SECRET::' }
             - { Name: WHATSAPP_CLOUD_WABA_ID, ValueFrom: !Sub '${ProviderSecrets}:WHATSAPP_CLOUD_WABA_ID::' }
             - { Name: WHATSAPP_CLOUD_VERIFY_TOKEN, ValueFrom: !Sub '${ProviderSecrets}:META_VERIFY_TOKEN::' }
-            - { Name: OPENROUTER_API_KEY, ValueFrom: !Sub '${ProviderSecrets}:OPENROUTER_API_KEY::' }
           MountPoints: [{ SourceVolume: axcas-runtime, ContainerPath: /run/axcas, ReadOnly: false }]
           LogConfiguration:
             LogDriver: awslogs
@@ -537,6 +549,7 @@ Resources:
         - Name: relay
           Image: !Ref WorkerImageUri
           Essential: true
+          User: '10001:10000'
           DependsOn: [{ ContainerName: hermes, Condition: START }]
           Command: [node, dist/apps/hermes-sqs-relay/src/server.js]
           Environment:
@@ -555,6 +568,8 @@ Resources:
         - Name: tool-bridge
           Image: !Ref WorkerImageUri
           Essential: true
+          User: '10001:10000'
+          DependsOn: [{ ContainerName: runtime-init, Condition: SUCCESS }]
           Command: [node, dist/apps/axcas-tool-bridge/src/server.js]
           Environment:
             - { Name: AXCAS_STATE_TABLE, Value: !Ref StateTable }

@@ -13,15 +13,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ffmpeg ca-c
     && git -C /opt/hermes fetch --depth 1 origin "${HERMES_GIT_REF}" \
     && git -C /opt/hermes checkout --detach FETCH_HEAD \
     && test "$(git -C /opt/hermes rev-parse HEAD)" = "${HERMES_GIT_REF}" \
-    && pip install --no-cache-dir "/opt/hermes[messaging]" \
-    && useradd --system --create-home --home-dir /var/lib/hermes hermes \
+    && pip install --no-cache-dir "/opt/hermes[messaging,bedrock,anthropic]" \
+    && groupadd --gid 10000 axcas-runtime \
+    && useradd --uid 10002 --gid 10000 --create-home --home-dir /var/lib/hermes --shell /usr/sbin/nologin hermes \
     && mkdir -p /var/lib/hermes/plugins/axcas /var/lib/hermes/skills/proofgate /run/axcas
 
 COPY hermes/plugins/axcas /var/lib/hermes/plugins/axcas
 COPY hermes/skills/proofgate /var/lib/hermes/skills/proofgate
 COPY infra/aws-native/hermes-config.yaml /var/lib/hermes/config.yaml
 
-RUN chown -R hermes:hermes /var/lib/hermes /run/axcas
-USER hermes
+RUN chown -R 10002:10000 /var/lib/hermes /run/axcas
+USER 10002:10000
 WORKDIR /var/lib/hermes
 CMD ["hermes", "gateway", "run"]
