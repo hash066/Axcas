@@ -4,12 +4,12 @@ COPY package.json package-lock.json ./
 COPY apps ./apps
 COPY packages ./packages
 RUN npm ci --ignore-scripts
-RUN npx esbuild apps/aws-control-plane/src/handler.ts --bundle --platform=node --target=node22 --format=esm --outfile=/out/handler.mjs \
-    && npx esbuild apps/aws-control-plane/src/cognito-challenge.ts --bundle --platform=node --target=node22 --format=esm --outfile=/out/cognito-challenge.mjs \
-    && npx esbuild apps/aws-control-plane/src/media-verifier.ts --bundle --platform=node --target=node22 --format=esm --outfile=/out/media-verifier.mjs
+RUN npx esbuild apps/aws-control-plane/src/handler.ts --bundle --platform=node --target=node22 --format=cjs --outfile=/out/handler.js \
+    && npx esbuild apps/aws-control-plane/src/cognito-challenge.ts --bundle --platform=node --target=node22 --format=cjs --outfile=/out/cognito-challenge.js \
+    && npx esbuild apps/aws-control-plane/src/media-verifier.ts --bundle --platform=node --target=node22 --format=cjs --outfile=/out/media-verifier.js
 
 FROM public.ecr.aws/lambda/nodejs:22
-COPY --from=build /out/handler.mjs ${LAMBDA_TASK_ROOT}/handler.mjs
-COPY --from=build /out/cognito-challenge.mjs ${LAMBDA_TASK_ROOT}/cognito-challenge.mjs
-COPY --from=build /out/media-verifier.mjs ${LAMBDA_TASK_ROOT}/media-verifier.mjs
+COPY --from=build /out/handler.js ${LAMBDA_TASK_ROOT}/handler.js
+COPY --from=build /out/cognito-challenge.js ${LAMBDA_TASK_ROOT}/cognito-challenge.js
+COPY --from=build /out/media-verifier.js ${LAMBDA_TASK_ROOT}/media-verifier.js
 CMD ["handler.handler"]

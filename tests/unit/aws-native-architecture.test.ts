@@ -63,7 +63,11 @@ describe("AWS-native production architecture", () => {
 
   it("packages three immutable runtimes and isolates finite orchestration work", () => {
     const template = readFileSync(templatePath, "utf8");
-    expect(readFileSync(controlPlaneDockerfile, "utf8")).toContain("public.ecr.aws/lambda/nodejs:22");
+    const controlPlane = readFileSync(controlPlaneDockerfile, "utf8");
+    expect(controlPlane).toContain("public.ecr.aws/lambda/nodejs:22");
+    expect(controlPlane).toContain("--format=cjs");
+    expect(controlPlane).toContain("--outfile=/out/handler.js");
+    expect(controlPlane).not.toContain("--format=esm");
     expect(readFileSync(workerDockerfile, "utf8")).toContain("ffmpeg");
     const hermes = readFileSync(hermesDockerfile, "utf8");
     expect(hermes).toContain("HERMES_GIT_REF=88a58ff1355eabe468b4dcd4e152a596932632e6");
