@@ -7,6 +7,7 @@ const workerDockerfile = new URL("../../infra/aws-native/Dockerfile.worker", imp
 const hermesDockerfile = new URL("../../infra/aws-native/Dockerfile.hermes", import.meta.url);
 const hermesConfig = new URL("../../infra/aws-native/hermes-config.yaml", import.meta.url);
 const hermesPublicChannelPatch = new URL("../../infra/aws-native/hermes-public-channel.patch", import.meta.url);
+const hermesRuntimeVerifier = new URL("../../infra/aws-native/verify-hermes-runtime.py", import.meta.url);
 const deployScript = new URL("../../infra/aws-native/deploy.ps1", import.meta.url);
 const productionGate = new URL("../../.github/workflows/production-gate.yml", import.meta.url);
 
@@ -116,6 +117,29 @@ describe("AWS-native production architecture", () => {
     expect(patch).toContain("source.message_id = wamid");
     expect(patch).toContain('if _action == "respond":');
     expect(patch).toContain("await _adapter.send(");
+  });
+
+  it("installs and imports the patched Hermes runtime rather than an unpatched wheel", () => {
+    const dockerfile = readFileSync(hermesDockerfile, "utf8");
+    const verifier = readFileSync(hermesRuntimeVerifier, "utf8");
+    const patchCopy = dockerfile.indexOf("COPY infra/aws-native/hermes-public-channel.patch");
+    const patchApply = dockerfile.indexOf("git -C /opt/hermes apply /tmp/hermes-public-channel.patch");
+    const installCommand = 'pip install --no-cache-dir "/opt/hermes[messaging,bedrock,anthropic]"';
+    const install = dockerfile.indexOf(installCommand);
+    const verify = dockerfile.indexOf("python /tmp/verify-hermes-runtime.py");
+
+    expect(patchCopy).toBeGreaterThan(-1);
+    expect(patchApply).toBeGreaterThan(patchCopy);
+    expect(install).toBeGreaterThan(patchApply);
+    expect(dockerfile.split(installCommand)).toHaveLength(2);
+    expect(verify).toBeGreaterThan(install);
+    expect(verifier).toContain("inspect.getsource(GatewayRunner._handle_message)");
+    expect(verifier).toContain("inspect.getsource(GatewayRunner._handle_message_with_agent)");
+    expect(verifier).toContain("inspect.getsource(WhatsAppCloudAdapter._build_message_event_from_cloud)");
+    expect(verifier).toContain('source.message_id = wamid');
+    expect(verifier).toContain('_action == "respond"');
+    expect(verifier).toContain("Platform.WEBHOOK, Platform.WHATSAPP_CLOUD");
+    expect(verifier).toContain("You are Axcas, the WhatsApp-first growth agent");
   });
 
   it("ships the Axcas BRAG-derived creative director without executable customer compositions", () => {

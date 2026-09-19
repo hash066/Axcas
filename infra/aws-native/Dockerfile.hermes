@@ -13,15 +13,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ffmpeg ca-c
     && git -C /opt/hermes fetch --depth 1 origin "${HERMES_GIT_REF}" \
     && git -C /opt/hermes checkout --detach FETCH_HEAD \
     && test "$(git -C /opt/hermes rev-parse HEAD)" = "${HERMES_GIT_REF}" \
-    && pip install --no-cache-dir "/opt/hermes[messaging,bedrock,anthropic]" \
     && groupadd --gid 10000 axcas-runtime \
     && useradd --uid 10002 --gid 10000 --create-home --home-dir /var/lib/hermes --shell /usr/sbin/nologin hermes \
     && mkdir -p /var/lib/hermes/plugins/axcas /var/lib/hermes/skills/proofgate /var/lib/hermes/skills/axcas-brag /run/axcas
 
 COPY infra/aws-native/hermes-public-channel.patch /tmp/hermes-public-channel.patch
+COPY infra/aws-native/verify-hermes-runtime.py /tmp/verify-hermes-runtime.py
 RUN git -C /opt/hermes apply --check /tmp/hermes-public-channel.patch \
     && git -C /opt/hermes apply /tmp/hermes-public-channel.patch \
-    && rm /tmp/hermes-public-channel.patch
+    && pip install --no-cache-dir "/opt/hermes[messaging,bedrock,anthropic]" \
+    && python /tmp/verify-hermes-runtime.py \
+    && rm /tmp/hermes-public-channel.patch /tmp/verify-hermes-runtime.py
 
 COPY hermes/plugins/axcas /var/lib/hermes/plugins/axcas
 COPY hermes/skills/proofgate /var/lib/hermes/skills/proofgate
