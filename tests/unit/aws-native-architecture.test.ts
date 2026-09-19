@@ -104,7 +104,7 @@ describe("AWS-native production architecture", () => {
     expect(workerRole).toContain("bedrock:InvokeModelWithResponseStream");
     expect(workerRole).toContain("bedrock:ListFoundationModels");
     expect(workerRole).toContain("bedrock:ListInferenceProfiles");
-    expect(template).not.toContain("OPENROUTER_API_KEY");
+    expect(workerTask).not.toContain("OPENROUTER_API_KEY");
   });
 
   it("initializes the shared Fargate socket volume before distinct non-root runtimes start", () => {

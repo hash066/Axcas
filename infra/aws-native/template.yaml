@@ -247,7 +247,7 @@ Resources:
       KmsKeyId: !Ref DataKey
       Description: Operator-managed Meta, Bedrock boundary, Vapi, and service credentials; never merchant-visible
       GenerateSecretString:
-        SecretStringTemplate: '{"META_APP_SECRET":"replace-before-provider-acceptance","META_VERIFY_TOKEN":"replace-before-provider-acceptance","WHATSAPP_CLOUD_PHONE_NUMBER_ID":"replace-before-provider-acceptance","WHATSAPP_CLOUD_ACCESS_TOKEN":"replace-before-provider-acceptance","WHATSAPP_CLOUD_APP_ID":"replace-before-provider-acceptance","WHATSAPP_CLOUD_WABA_ID":"replace-before-provider-acceptance"}'
+        SecretStringTemplate: '{"META_APP_SECRET":"replace-before-provider-acceptance","META_VERIFY_TOKEN":"replace-before-provider-acceptance","WHATSAPP_CLOUD_PHONE_NUMBER_ID":"replace-before-provider-acceptance","WHATSAPP_CLOUD_ACCESS_TOKEN":"replace-before-provider-acceptance","WHATSAPP_CLOUD_APP_ID":"replace-before-provider-acceptance","WHATSAPP_CLOUD_WABA_ID":"replace-before-provider-acceptance","OPENROUTER_API_KEY":"replace-before-provider-acceptance"}'
         GenerateStringKey: PROOFGATE_SERVICE_SECRET
         PasswordLength: 64
         ExcludePunctuation: true
