@@ -546,6 +546,18 @@ async function dependencies(): Promise<AwsControlPlaneDependencies> {
 export async function handler(event: ApiGatewayEvent): Promise<ApiGatewayResponse> {
   const method = event.requestContext?.http?.method ?? "GET";
   const path = event.rawPath ?? "/";
+  // Keep the infrastructure health signal independent from optional provider
+  // configuration. Provider credentials are loaded lazily for every route that
+  // can receive or mutate merchant data, but a missing provider secret must not
+  // make the Lambda itself appear dead.
+  if (method === "GET" && path === "/health") {
+    return {
+      statusCode: 200,
+      headers: { "content-type": "application/json; charset=UTF-8", "cache-control": "no-store" },
+      body: JSON.stringify({ status: "ok" }),
+      isBase64Encoded: false,
+    };
+  }
   const query = event.rawQueryString ? `?${event.rawQueryString}` : "";
   const body = event.body ? (event.isBase64Encoded ? Buffer.from(event.body, "base64") : event.body) : undefined;
   const requestHeaders = new Headers(event.headers as HeadersInit);
