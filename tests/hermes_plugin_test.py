@@ -221,6 +221,96 @@ class MerchantOutputGuardTests(unittest.TestCase):
             self.plugin.SAFE_NO_TOOL_MESSAGE,
         )
 
+    def test_gateway_start_short_circuits_the_model_entirely(self):
+        event = types.SimpleNamespace(
+            text="START AXCAS",
+            message_id="wamid.start",
+            source=types.SimpleNamespace(
+                platform="whatsapp_cloud",
+                user_id="919876543210",
+                message_id="wamid.start",
+            ),
+        )
+        with mock.patch.object(self.plugin, "_call_bridge") as call_bridge:
+            routed = self.plugin._route_gateway_control_message(event=event)
+
+        self.assertEqual(routed, {"action": "respond", "text": self.plugin.WELCOME_MESSAGE})
+        call_bridge.assert_not_called()
+
+    def test_gateway_retry_replays_before_any_model_request(self):
+        payload = {"transcript": "Golden Crust sells sourdough in Hubli."}
+        context = {"platform": "whatsapp_cloud", "userId": "919876543210", "messageId": "wamid.original"}
+        with mock.patch.object(self.plugin, "_session_context", return_value=context), \
+             mock.patch.object(self.plugin, "_UnixHTTPConnection", side_effect=ConnectionRefusedError()), \
+             mock.patch.object(self.plugin.sys.stderr, "write"):
+            self.plugin._call_bridge("orchestrate_build", payload)
+
+        raw = json.dumps({
+            "status": "accepted",
+            "customerMessage": "Please send at least one real business photo.",
+            "notifyCustomer": True,
+        }).encode("utf-8")
+        response = mock.Mock(status=200)
+        response.read.return_value = raw
+        connection = mock.Mock()
+        connection.getresponse.return_value = response
+        event = types.SimpleNamespace(
+            text=" retry ",
+            message_id="wamid.retry",
+            source=types.SimpleNamespace(
+                platform="whatsapp_cloud",
+                user_id="919876543210",
+                message_id="wamid.retry",
+            ),
+        )
+        with mock.patch.object(self.plugin, "_UnixHTTPConnection", return_value=connection):
+            routed = self.plugin._route_gateway_control_message(event=event)
+
+        self.assertEqual(routed, {"action": "respond", "text": "Please send at least one real business photo."})
+        sent = json.loads(connection.request.call_args.kwargs["body"].decode("utf-8"))
+        self.assertEqual(sent["payload"], payload)
+        self.assertEqual(sent["context"]["messageId"], "wamid.retry")
+
+    def test_gateway_retry_without_paused_work_gives_one_clear_next_step(self):
+        event = types.SimpleNamespace(
+            text="RETRY",
+            message_id="wamid.retry-empty",
+            source=types.SimpleNamespace(
+                platform="whatsapp_cloud",
+                user_id="919876543210",
+                message_id="wamid.retry-empty",
+            ),
+        )
+
+        self.assertEqual(
+            self.plugin._route_gateway_control_message(event=event),
+            {"action": "respond", "text": self.plugin.NO_PENDING_RETRY_MESSAGE},
+        )
+
+    def test_bridge_failure_logs_only_operator_safe_classification(self):
+        context = {"platform": "whatsapp_cloud", "userId": "919876543210", "messageId": "wamid.private"}
+        with mock.patch.object(self.plugin, "_session_context", return_value=context), \
+             mock.patch.object(self.plugin, "_UnixHTTPConnection", side_effect=FileNotFoundError("/run/axcas/tool-bridge.sock")), \
+             mock.patch.object(self.plugin.sys.stderr, "write") as write:
+            result = json.loads(self.plugin._call_bridge("orchestrate_build", {"transcript": "private business description"}))
+
+        self.assertEqual(result["status"], "temporarily_unavailable")
+        diagnostic = json.loads(write.call_args.args[0])
+        self.assertEqual(diagnostic, {
+            "service": "axcas-hermes-plugin",
+            "action": "orchestrate_build",
+            "stage": "bridge_connect",
+            "failure": "bridge_connectivity",
+            "outcome": "retryable_failure",
+        })
+        self.assertNotIn("919876543210", write.call_args.args[0])
+        self.assertNotIn("private business description", write.call_args.args[0])
+
+    def test_registers_deterministic_control_message_router(self):
+        ctx = mock.Mock()
+        self.plugin.register(ctx)
+        ctx.register_hook.assert_any_call("pre_gateway_dispatch", self.plugin._route_gateway_control_message)
+
 
 if __name__ == "__main__":
     unittest.main()

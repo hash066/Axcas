@@ -110,6 +110,14 @@ describe("AWS-native production architecture", () => {
     expect(patch).toContain("call axcas_continue before replying");
   });
 
+  it("binds the inbound WhatsApp message id into the Hermes session source", () => {
+    const patch = readFileSync(hermesPublicChannelPatch, "utf8");
+
+    expect(patch).toContain("source.message_id = wamid");
+    expect(patch).toContain('if _action == "respond":');
+    expect(patch).toContain("await _adapter.send(");
+  });
+
   it("ships the Axcas BRAG-derived creative director without executable customer compositions", () => {
     const dockerfile = readFileSync(hermesDockerfile, "utf8");
     const skill = readFileSync(new URL("../../hermes/skills/axcas-brag/SKILL.md", import.meta.url), "utf8");

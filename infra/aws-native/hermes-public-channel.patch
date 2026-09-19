@@ -82,3 +82,35 @@ index 54f38d1..0a2c1a1 100644
 +            and source.platform not in {Platform.LOCAL, Platform.WEBHOOK, Platform.WHATSAPP_CLOUD}
 +        ):
              platform_name = source.platform.value
+@@ -8914,6 +8914,19 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+                         source.chat_id or "unknown",
+                     )
+                     return None
++                if _action == "respond":
++                    _response_text = _result.get("text")
++                    if not isinstance(_response_text, str) or not _response_text.strip() or len(_response_text) > 4096:
++                        logger.warning("pre_gateway_dispatch returned an invalid direct response")
++                        return None
++                    _adapter = self._adapter_for_source(source)
++                    if _adapter:
++                        await _adapter.send(
++                            source.chat_id,
++                            _response_text,
++                            metadata=self._thread_metadata_for_source(source),
++                        )
++                    return None
+                 if _action == "rewrite":
+                     _new_text = _result.get("text")
+                     if isinstance(_new_text, str):
+diff --git a/gateway/platforms/whatsapp_cloud.py b/gateway/platforms/whatsapp_cloud.py
+index c97122ede1..f02fc6cf26 100644
+--- a/gateway/platforms/whatsapp_cloud.py
++++ b/gateway/platforms/whatsapp_cloud.py
+@@ -2010,6 +2010,7 @@ class WhatsAppCloudAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
+         # Cloud API timestamps are unix seconds (string). MessageEvent
+         # doesn't enforce a type but downstream code formats with it.
+         wamid = str(raw_message.get("id") or "") or None
++        source.message_id = wamid
+         if wamid and chat_id:
+             # Refresh the per-chat latest-wamid cache so a subsequent
+             # send_typing call can attach the indicator + read receipt

@@ -12,7 +12,10 @@ import json
 import os
 import re
 import socket
+import sys
 import threading
+import time
+from collections import OrderedDict
 from typing import Any
 
 
@@ -24,6 +27,16 @@ SAFE_NO_TOOL_MESSAGE = (
     "I couldn’t start this step just now. Please reply RETRY; you won’t "
     "need to retype your business details."
 )
+WELCOME_MESSAGE = (
+    "Welcome to Axcas. Send one voice note describing your business and say "
+    "Website, Reels, or Both. Add your photos, products or services, and prices "
+    "in this chat—I’ll ask at most one follow-up."
+)
+NO_PENDING_RETRY_MESSAGE = (
+    "There isn’t a paused step to retry. Send your business details, photos, "
+    "prices, and say Website, Reels, or Both."
+)
+RETRY_ACCEPTED_MESSAGE = "Received. I’m continuing from what you already sent."
 
 _WHATSAPP_PLATFORMS = frozenset({"whatsapp", "whatsapp_cloud"})
 _AXCAS_TOOLS = frozenset({"axcas_continue", "axcas_status"})
@@ -47,6 +60,13 @@ _ACTIONS = frozenset({
 # unrelated merchant sessions handled concurrently by the gateway.
 _TOOL_RECEIPTS: dict[str, tuple[bool, str]] = {}
 _TOOL_RECEIPTS_LOCK = threading.Lock()
+
+# A failed bridge call retains the exact typed request for a bounded period so
+# an explicit RETRY can replay it without asking the merchant to retype facts.
+# Entries are sender-bound, process-local, size-bounded, and never logged.
+_PENDING_RETRIES: OrderedDict[str, tuple[float, str, Any]] = OrderedDict()
+_PENDING_RETRY_TTL_SECONDS = 60 * 60
+_MAX_PENDING_RETRIES = 1024
 
 # This is a fail-closed customer-output policy, not a best-effort secret masker.
 # LLM-authored technical output is suppressed. A real bridge failure separately returns the
@@ -97,6 +117,61 @@ class _UnixHTTPConnection(http.client.HTTPConnection):
         self.sock = connection
 
 
+def _merchant_key(context: dict[str, str]) -> str:
+    return f"{context['platform']}:{context['userId']}"
+
+
+def _prune_pending_retries(now: float) -> None:
+    while _PENDING_RETRIES:
+        first_key = next(iter(_PENDING_RETRIES))
+        created_at = _PENDING_RETRIES[first_key][0]
+        if now - created_at <= _PENDING_RETRY_TTL_SECONDS:
+            break
+        _PENDING_RETRIES.popitem(last=False)
+    while len(_PENDING_RETRIES) >= _MAX_PENDING_RETRIES:
+        _PENDING_RETRIES.popitem(last=False)
+
+
+def _remember_retry(context: dict[str, str], action: str, payload: Any) -> None:
+    # The request was already JSON-serializable before bridge dispatch. A JSON
+    # copy prevents a caller from mutating the retained request after failure.
+    retained_payload = json.loads(json.dumps(payload, separators=(",", ":")))
+    now = time.monotonic()
+    with _TOOL_RECEIPTS_LOCK:
+        _prune_pending_retries(now)
+        key = _merchant_key(context)
+        _PENDING_RETRIES.pop(key, None)
+        _PENDING_RETRIES[key] = (now, action, retained_payload)
+
+
+def _take_retry(context: dict[str, str]) -> tuple[str, Any] | None:
+    now = time.monotonic()
+    with _TOOL_RECEIPTS_LOCK:
+        _prune_pending_retries(now)
+        entry = _PENDING_RETRIES.pop(_merchant_key(context), None)
+    if entry is None or now - entry[0] > _PENDING_RETRY_TTL_SECONDS:
+        return None
+    return entry[1], entry[2]
+
+
+def _clear_retry(context: dict[str, str]) -> None:
+    with _TOOL_RECEIPTS_LOCK:
+        _PENDING_RETRIES.pop(_merchant_key(context), None)
+
+
+def _operator_diagnostic(action: str, stage: str, failure: str) -> None:
+    # Never log exception strings, payloads, sender IDs, message IDs, paths, or
+    # provider responses here. The class and stage are enough for operators to
+    # distinguish routing, socket, timeout, and response failures.
+    sys.stderr.write(json.dumps({
+        "service": "axcas-hermes-plugin",
+        "action": action,
+        "stage": stage,
+        "failure": failure,
+        "outcome": "retryable_failure",
+    }, separators=(",", ":")) + "\n")
+
+
 def _session_context() -> dict[str, str]:
     from gateway.session_context import get_session_env
 
@@ -110,12 +185,20 @@ def _session_context() -> dict[str, str]:
     return {"platform": platform, "userId": user_id, "messageId": message_id}
 
 
-def _call_bridge(action: str, payload: Any) -> str:
+def _call_bridge(
+    action: str,
+    payload: Any,
+    request_context: dict[str, str] | None = None,
+) -> str:
+    connection: _UnixHTTPConnection | None = None
+    stage = "session_context"
     try:
+        request_context = request_context or _session_context()
+        stage = "bridge_configuration"
         socket_path = os.environ.get("AXCAS_BRIDGE_SOCKET", "/run/axcas/tool-bridge.sock")
         if not socket_path.startswith("/run/axcas/") or not socket_path.endswith(".sock"):
             raise ValueError("bridge unavailable")
-        request_context = _session_context()
+        stage = "request_encoding"
         request_body = json.dumps({
             "action": action,
             "context": request_context,
@@ -123,6 +206,7 @@ def _call_bridge(action: str, payload: Any) -> str:
         }, separators=(",", ":")).encode("utf-8")
         if len(request_body) > 1024 * 1024:
             raise ValueError("request too large")
+        stage = "bridge_connect"
         connection = _UnixHTTPConnection(socket_path)
         connection.request(
             "POST",
@@ -130,9 +214,9 @@ def _call_bridge(action: str, payload: Any) -> str:
             body=request_body,
             headers={"content-type": "application/json", "content-length": str(len(request_body))},
         )
+        stage = "bridge_response"
         response = connection.getresponse()
         raw = response.read(1024 * 1024 + 1)
-        connection.close()
         if response.status != 200 or len(raw) > 1024 * 1024:
             raise ValueError("bridge unavailable")
         result = json.loads(raw.decode("utf-8"))
@@ -161,13 +245,79 @@ def _call_bridge(action: str, payload: Any) -> str:
                     "customerMessage": SAFE_RETRY_MESSAGE,
                     "notifyCustomer": True,
                 }
+        if allowed.get("status") == "temporarily_unavailable":
+            _remember_retry(request_context, action, payload)
+            _operator_diagnostic(action, "bridge_response", "bridge_reported_unavailable")
+        else:
+            _clear_retry(request_context)
         return json.dumps(allowed, separators=(",", ":"))
-    except Exception:
+    except Exception as error:
+        if request_context is not None:
+            _remember_retry(request_context, action, payload)
+        if isinstance(error, (socket.timeout, TimeoutError)):
+            failure = "bridge_timeout"
+        elif isinstance(error, (ConnectionError, OSError)) and stage in {"bridge_connect", "bridge_response"}:
+            failure = "bridge_connectivity"
+        elif stage == "session_context":
+            failure = "session_context_unavailable"
+        elif stage == "bridge_configuration":
+            failure = "bridge_configuration_invalid"
+        elif stage == "request_encoding":
+            failure = "bridge_request_invalid"
+        elif stage == "bridge_response":
+            failure = "bridge_response_invalid"
+        else:
+            failure = "unexpected_failure"
+        _operator_diagnostic(action, stage, failure)
         return json.dumps({
             "status": "temporarily_unavailable",
             "customerMessage": SAFE_RETRY_MESSAGE,
             "notifyCustomer": True,
         }, separators=(",", ":"))
+    finally:
+        if connection is not None:
+            try:
+                connection.close()
+            except Exception:
+                pass
+
+
+def _gateway_event_context(event: Any) -> dict[str, str] | None:
+    source = getattr(event, "source", None)
+    platform = str(getattr(getattr(source, "platform", ""), "value", getattr(source, "platform", "")) or "").strip().lower()
+    user_id = str(getattr(source, "user_id", "") or "").strip()
+    message_id = str(getattr(event, "message_id", "") or getattr(source, "message_id", "") or "").strip()
+    if platform not in _WHATSAPP_PLATFORMS or not re.fullmatch(r"\d{8,15}", user_id):
+        return None
+    if not message_id or len(message_id) > 512:
+        return None
+    return {"platform": platform, "userId": user_id, "messageId": message_id}
+
+
+def _route_gateway_control_message(event: Any = None, **_kwargs: Any) -> dict[str, str] | None:
+    """Short-circuit exact public control messages before any model request."""
+    source = getattr(event, "source", None)
+    platform = str(getattr(getattr(source, "platform", ""), "value", getattr(source, "platform", "")) or "").strip().lower()
+    if platform not in _WHATSAPP_PLATFORMS:
+        return None
+    normalized = " ".join(str(getattr(event, "text", "") or "").split()).upper()
+    if normalized == "START AXCAS":
+        return {"action": "respond", "text": WELCOME_MESSAGE}
+    if normalized != "RETRY":
+        return None
+    context = _gateway_event_context(event)
+    if context is None:
+        _operator_diagnostic("retry", "session_context", "session_context_unavailable")
+        return {"action": "respond", "text": SAFE_RETRY_MESSAGE}
+    pending = _take_retry(context)
+    if pending is None:
+        return {"action": "respond", "text": NO_PENDING_RETRY_MESSAGE}
+    action, payload = pending
+    result = json.loads(_call_bridge(action, payload, context))
+    customer_message = result.get("customerMessage")
+    if result.get("notifyCustomer") is True and isinstance(customer_message, str) and customer_message:
+        return {"action": "respond", "text": customer_message}
+    return {"action": "respond", "text": RETRY_ACCEPTED_MESSAGE}
 
 
 def _handle_continue(params: dict[str, Any], **_kwargs: Any) -> str:
@@ -316,4 +466,5 @@ def register(ctx: Any) -> None:
     )
     ctx.register_hook("pre_tool_call", _block_non_axcas_tools)
     ctx.register_hook("post_tool_call", _record_axcas_tool_result)
+    ctx.register_hook("pre_gateway_dispatch", _route_gateway_control_message)
     ctx.register_hook("transform_llm_output", _filter_llm_output)
