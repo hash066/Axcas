@@ -100,7 +100,9 @@ function stableId(prefix: "workflow-wa" | "project-wa", value: string): string {
 }
 
 function normalizeBuildInput(payload: unknown, context: BridgeRequest["context"]): MerchantWorkflowInput {
-  const value = SparseBuildPayloadSchema.parse(payload);
+  const parsed = SparseBuildPayloadSchema.safeParse(payload);
+  if (!parsed.success) return normalizeLegacyIntakeBuildInput(payload, context);
+  const value = parsed.data;
   return MerchantWorkflowInputSchema.parse({
     ...value,
     schemaVersion: 1,

@@ -221,6 +221,47 @@ describe("Axcas typed tool bridge", () => {
     });
   });
 
+  it("normalizes a structured orchestrate payload instead of rejecting the saved retry", async () => {
+    const runWorkflow = vi.fn(async (input: unknown) => {
+      expect(input).toMatchObject({
+        intent: "both",
+        transcript: expect.stringContaining("Hazelnut cake"),
+        assetIds: ["merchant-bound-cake-photo"],
+        context,
+      });
+      return {
+        status: "awaiting_input" as const,
+        missingFacts: ["leadTime"],
+        customerMessages: [],
+      };
+    });
+    const result = await executeBridgeRequest(
+      {
+        action: "orchestrate_build",
+        context,
+        payload: {
+          businessName: "Golden Crust",
+          description: "Home bakery in Hubli",
+          projectIntent: "both",
+          assetIds: ["merchant-bound-cake-photo"],
+          catalog: [{ name: "Hazelnut cake", currency: "INR", imageAssetId: "merchant-bound-cake-photo" }],
+        },
+      },
+      vi.fn(),
+      {
+        PROOFGATE_ADMIN_URL: "https://example.workers.dev",
+        PROOFGATE_SERVICE_SECRET: "server-only-secret-material-12345",
+      },
+      runWorkflow,
+    );
+    expect(result).toEqual({
+      status: "accepted",
+      notifyCustomer: true,
+      customerMessage: "One quick thing before I build: how much advance notice do you need?",
+    });
+    expect(runWorkflow).toHaveBeenCalledOnce();
+  });
+
   it("uploads a sender-bound immutable image without accepting a model merchant id", async () => {
     const body = new Uint8Array([0xff, 0xd8, 0xff, 0xdb]);
     const digest = "b52088d1e1c6bd964e489396bf41f04eaef6db38f5001bd5603dc97ae3f0f916";
