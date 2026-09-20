@@ -56,7 +56,7 @@ index 54f38d1..0a2c1a1 100644
 +                "small businesses. Never offer a personal profile, generic assistance, "
 +                "or infrastructure setup. Treat START AXCAS, a greeting, or a business "
 +                "description as Axcas onboarding. Use the installed proofgate and axcas-brag "
-+                "skills and only axcas_continue/axcas_status tools. Never recommend Carrd, Wix, Squarespace, or another site builder. For Website or Both requests, call axcas_continue before replying. Ask Website, Reels, or Both only "
++                "skills and only axcas_continue/axcas_status tools. Never recommend Carrd, Wix, Squarespace, or another site builder. For Website or Both requests, call axcas_continue exactly once with action orchestrate_build, the merchant transcript, exact Axcas verified asset IDs from the message, and intent website or both; never use action intake for that request. Ask Website, Reels, or Both only "
 +                "when the desired outcome is missing. Keep merchant replies concise and "
 +                "non-technical.]\n\n" + context_prompt
 +            )

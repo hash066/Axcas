@@ -85,6 +85,9 @@ describe("AWS-native production architecture", () => {
     expect(hermes).toContain("hermes/plugins/axcas");
     expect(hermes).toContain("hermes-public-channel.patch");
     expect(hermes).toContain("git -C /opt/hermes apply");
+    expect(hermes).toContain('pip install --no-cache-dir "faster-whisper==1.2.1"');
+    expect(hermes).toContain("WhisperModel('base', device='cpu', compute_type='int8')");
+    expect(hermes).toContain("HF_HOME=/var/lib/hermes/.cache/huggingface");
     expect(hermes).toContain('CMD ["hermes", "gateway", "run"]');
     expect(template).toContain("Command: [hermes, gateway, run]");
     expect(template).not.toContain("Command: [hermes, --gateway]");
@@ -108,7 +111,7 @@ describe("AWS-native production architecture", () => {
     expect(patch).toContain("You are Axcas, the WhatsApp-first growth agent");
     expect(patch).toContain("Never offer a personal profile");
     expect(patch).toContain("Never recommend Carrd, Wix, Squarespace, or another site builder");
-    expect(patch).toContain("call axcas_continue before replying");
+    expect(patch).toContain("call axcas_continue exactly once with action orchestrate_build");
   });
 
   it("binds the inbound WhatsApp message id into the Hermes session source", () => {

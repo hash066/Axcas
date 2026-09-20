@@ -181,6 +181,82 @@ describe("Axcas typed tool bridge", () => {
     expect(runWorkflow).toHaveBeenCalledOnce();
   });
 
+  it("recovers a model-selected sparse intake as the guarded build workflow", async () => {
+    const runWorkflow = vi.fn(async (input: unknown) => {
+      expect(input).toMatchObject({
+        intent: "both",
+        transcript: expect.stringContaining("Golden Crust"),
+        assetIds: ["merchant-bound-cake-photo"],
+        context,
+      });
+      return {
+        status: "awaiting_input" as const,
+        missingFacts: ["leadTime"],
+        customerMessages: [],
+      };
+    });
+    const result = await executeBridgeRequest(
+      {
+        action: "intake",
+        context,
+        payload: {
+          businessName: "Golden Crust",
+          description: "Hazelnut cakes from a home bakery in Hubli",
+          projectIntent: "both",
+          assetIds: ["merchant-bound-cake-photo"],
+          catalog: [{ name: "Hazelnut cake", currency: "INR", imageAssetId: "merchant-bound-cake-photo" }],
+        },
+      },
+      vi.fn(),
+      {
+        PROOFGATE_ADMIN_URL: "https://example.workers.dev",
+        PROOFGATE_SERVICE_SECRET: "server-only-secret-material-12345",
+      },
+      runWorkflow,
+    );
+    expect(result).toEqual({
+      status: "accepted",
+      notifyCustomer: true,
+      customerMessage: "One quick thing before I build: how much advance notice do you need?",
+    });
+  });
+
+  it("uploads a sender-bound immutable image without accepting a model merchant id", async () => {
+    const body = new Uint8Array([0xff, 0xd8, 0xff, 0xdb]);
+    const digest = "b52088d1e1c6bd964e489396bf41f04eaef6db38f5001bd5603dc97ae3f0f916";
+    const submit = vi.fn(async (command, env) => {
+      expect(command).toMatchObject({
+        path: "/internal/assets/wa-cake-photo",
+        method: "PUT",
+        contentType: "image/jpeg",
+        extraHeaders: { "x-proofgate-source-message-id": context.messageId },
+      });
+      expect(Array.from(command.body as Uint8Array)).toEqual(Array.from(body));
+      expect(command.extraHeaders).not.toHaveProperty("x-proofgate-merchant-id");
+      expect(env.HERMES_SESSION_USER_ID).toBe(context.userId);
+      return { accepted: true, assetId: "merchant-bound-cake-photo" };
+    });
+    const result = await executeBridgeRequest(
+      {
+        action: "asset",
+        context,
+        payload: {
+          localAssetId: "wa-cake-photo",
+          contentType: "image/jpeg",
+          sha256: digest,
+          byteLength: body.byteLength,
+          dataBase64: Buffer.from(body).toString("base64"),
+        },
+      },
+      submit,
+      {
+        PROOFGATE_ADMIN_URL: "https://example.workers.dev",
+        PROOFGATE_SERVICE_SECRET: "server-only-secret-material-12345",
+      },
+    );
+    expect(result).toEqual({ status: "accepted", customerMessage: "", notifyCustomer: false, assetIds: ["merchant-bound-cake-photo"] });
+  });
+
   it("consolidates every missing fact into one customer-safe question", async () => {
     const result = await executeBridgeRequest(
       {

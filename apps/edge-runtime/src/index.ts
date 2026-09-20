@@ -1415,10 +1415,11 @@ export function createApp(evidenceBoundary: EvidenceBoundary = liveEvidenceBound
     const merchantId = context.req.header("x-proofgate-merchant-id");
     const sourceProviderMessageId = context.req.header("x-proofgate-source-message-id");
     const contentType = context.req.header("content-type") ?? "application/octet-stream";
-    if (!/^[a-zA-Z0-9_-]{3,100}$/.test(localAssetId) || !merchantId || !sourceProviderMessageId) return context.text("Invalid asset metadata", 400);
+    if (!/^[a-zA-Z0-9_-]{3,100}$/.test(localAssetId) || !sourceProviderMessageId) return context.text("Invalid asset metadata", 400);
     const tenant = await tenantFromHermesHeader(context.req.header("x-hermes-user-id"));
     if (!tenant) return context.text("Authenticated WhatsApp sender is required", 400);
-    if (merchantId !== tenant.merchantId) return context.text("Hermes tenant identity mismatch", 403);
+    if (merchantId && merchantId !== tenant.merchantId) return context.text("Hermes tenant identity mismatch", 403);
+    const boundMerchantId = tenant.merchantId;
     const assetId = tenantScopedAssetId(tenant, localAssetId);
     if (!/^image\/(jpeg|png|webp)$/.test(contentType) && contentType !== "video/mp4" && !/^audio\/(mpeg|ogg)$/.test(contentType)) return context.text("Unsupported asset type", 415);
     const body = new Uint8Array(await context.req.arrayBuffer());
@@ -1426,17 +1427,17 @@ export function createApp(evidenceBoundary: EvidenceBoundary = liveEvidenceBound
     if (!hasValidAssetSignature(contentType, body)) return context.text("Asset content does not match its declared type", 415);
     const digest = await sha256Bytes(body);
     const operationId = `asset:${assetId}:${digest}`;
-    const assetUsage = await adminBoundary.reserveUsage({ merchantId, operationId, idempotencyKey: `reserve:${operationId}`, requestedAt: Date.now(), reservations: [{ metric: "storage_bytes", quantity: body.byteLength }] }, context.env);
+    const assetUsage = await adminBoundary.reserveUsage({ merchantId: boundMerchantId, operationId, idempotencyKey: `reserve:${operationId}`, requestedAt: Date.now(), reservations: [{ metric: "storage_bytes", quantity: body.byteLength }] }, context.env);
     if (!assetUsage.allowed) return context.json({ accepted: false, stage: "usage_limit", message: quotaExceededCustomerMessage("storage_bytes") }, 429);
     if (!context.env?.PROOFGATE_ASSETS) {
-      const result = await adminBoundary.uploadAsset({ assetId, merchantId, sha256: digest, contentType, byteLength: body.byteLength, sourceProviderMessageId, body }, context.env);
-      await adminBoundary.recordActualUsage({ usageEntryId: `actual:${operationId}`, idempotencyKey: `actual:${operationId}`, operationId, merchantId, metric: "storage_bytes", quantity: body.byteLength, evidenceRef: `sha256:${digest}`, occurredAt: Date.now() }, context.env);
+      const result = await adminBoundary.uploadAsset({ assetId, merchantId: boundMerchantId, sha256: digest, contentType, byteLength: body.byteLength, sourceProviderMessageId, body }, context.env);
+      await adminBoundary.recordActualUsage({ usageEntryId: `actual:${operationId}`, idempotencyKey: `actual:${operationId}`, operationId, merchantId: boundMerchantId, metric: "storage_bytes", quantity: body.byteLength, evidenceRef: `sha256:${digest}`, occurredAt: Date.now() }, context.env);
       return context.json({ accepted: true, localAssetId, assetId, sha256: digest, storageBackend: "convex", result }, 201);
     }
     const objectKey = `assets/${tenant.merchantId}/${assetId}/${digest}`;
-    await context.env.PROOFGATE_ASSETS.put(objectKey, body, { httpMetadata: { contentType }, customMetadata: { sha256: digest, merchantId } });
-    const result = await adminBoundary.registerAsset({ assetId, merchantId, storageBackend: "r2", objectKey, sha256: digest, contentType, byteLength: body.byteLength, sourceProviderMessageId }, context.env);
-    await adminBoundary.recordActualUsage({ usageEntryId: `actual:${operationId}`, idempotencyKey: `actual:${operationId}`, operationId, merchantId, metric: "storage_bytes", quantity: body.byteLength, evidenceRef: `sha256:${digest}`, occurredAt: Date.now() }, context.env);
+    await context.env.PROOFGATE_ASSETS.put(objectKey, body, { httpMetadata: { contentType }, customMetadata: { sha256: digest, merchantId: boundMerchantId } });
+    const result = await adminBoundary.registerAsset({ assetId, merchantId: boundMerchantId, storageBackend: "r2", objectKey, sha256: digest, contentType, byteLength: body.byteLength, sourceProviderMessageId }, context.env);
+    await adminBoundary.recordActualUsage({ usageEntryId: `actual:${operationId}`, idempotencyKey: `actual:${operationId}`, operationId, merchantId: boundMerchantId, metric: "storage_bytes", quantity: body.byteLength, evidenceRef: `sha256:${digest}`, occurredAt: Date.now() }, context.env);
     return context.json({ accepted: true, localAssetId, assetId, sha256: digest, storageBackend: "r2", result }, 201);
   });
   app.get("/internal/render-assets/:assetId", async (context) => {

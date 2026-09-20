@@ -4,7 +4,9 @@ import { createServer } from "node:http";
 import { executeBridgeRequest } from "./bridge";
 
 const socketPath = process.env.AXCAS_BRIDGE_SOCKET ?? "/run/axcas/tool-bridge.sock";
-const maxBodyBytes = 1024 * 1024;
+// A 16 MiB WhatsApp image expands to about 21.4 MiB as base64. Keep the
+// socket private and bounded while allowing one authenticated immutable asset.
+const maxBodyBytes = 24 * 1024 * 1024;
 
 if (!socketPath.startsWith("/run/axcas/") || !socketPath.endsWith(".sock")) {
   throw new Error("AXCAS_BRIDGE_SOCKET must be an Axcas runtime socket");

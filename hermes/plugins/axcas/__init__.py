@@ -8,8 +8,11 @@ server credential and validates every payload.
 from __future__ import annotations
 
 import http.client
+import base64
+import hashlib
 import json
 import os
+from pathlib import Path
 import re
 import socket
 import sys
@@ -52,6 +55,9 @@ _ACTIONS = frozenset({
     "reel",
     "orchestrate_build",
 })
+
+_MAX_IMAGE_BYTES = 16 * 1024 * 1024
+_BRIDGE_REQUEST_BYTES = 24 * 1024 * 1024
 
 # A public WhatsApp reply is allowed only when it is backed by an Axcas tool
 # result from the same Hermes session. The receipt is consumed exactly once by
@@ -204,7 +210,7 @@ def _call_bridge(
             "context": request_context,
             "payload": payload,
         }, separators=(",", ":")).encode("utf-8")
-        if len(request_body) > 1024 * 1024:
+        if len(request_body) > _BRIDGE_REQUEST_BYTES:
             raise ValueError("request too large")
         stage = "bridge_connect"
         connection = _UnixHTTPConnection(socket_path)
@@ -226,7 +232,7 @@ def _call_bridge(
             key: result[key]
             for key in (
                 "status", "customerMessage", "merchantId", "previewUrl",
-                "previewExpiresAt", "specHash", "decision", "notifyCustomer",
+                "previewExpiresAt", "specHash", "decision", "notifyCustomer", "assetIds",
             )
             if key in result
         }
@@ -294,6 +300,39 @@ def _gateway_event_context(event: Any) -> dict[str, str] | None:
     return {"platform": platform, "userId": user_id, "messageId": message_id}
 
 
+def _ingest_event_images(event: Any, context: dict[str, str]) -> list[str] | None:
+    """Upload adapter-cached images through the sender-bound private bridge."""
+    media_urls = list(getattr(event, "media_urls", None) or [])
+    media_types = list(getattr(event, "media_types", None) or [])
+    asset_ids: list[str] = []
+    for index, raw_path in enumerate(media_urls):
+        content_type = str(media_types[index] if index < len(media_types) else "").split(";", 1)[0].strip().lower()
+        content_type = {"image/jpg": "image/jpeg"}.get(content_type, content_type)
+        if content_type not in {"image/jpeg", "image/png", "image/webp"}:
+            continue
+        try:
+            path = Path(str(raw_path)).resolve(strict=True)
+            if not path.is_file() or path.stat().st_size <= 0 or path.stat().st_size > _MAX_IMAGE_BYTES:
+                raise ValueError("image unavailable")
+            body = path.read_bytes()
+            digest = hashlib.sha256(body).hexdigest()
+            result = json.loads(_call_bridge("asset", {
+                "localAssetId": f"wa-{digest[:32]}",
+                "contentType": content_type,
+                "sha256": digest,
+                "byteLength": len(body),
+                "dataBase64": base64.b64encode(body).decode("ascii"),
+            }, context))
+            returned = result.get("assetIds")
+            if result.get("status") != "accepted" or not isinstance(returned, list) or len(returned) != 1 or not isinstance(returned[0], str):
+                return None
+            asset_ids.append(returned[0])
+        except Exception:
+            _operator_diagnostic("asset", "media_ingestion", "asset_upload_unavailable")
+            return None
+    return asset_ids
+
+
 def _route_gateway_control_message(event: Any = None, **_kwargs: Any) -> dict[str, str] | None:
     """Short-circuit exact public control messages before any model request."""
     source = getattr(event, "source", None)
@@ -303,21 +342,30 @@ def _route_gateway_control_message(event: Any = None, **_kwargs: Any) -> dict[st
     normalized = " ".join(str(getattr(event, "text", "") or "").split()).upper()
     if normalized == "START AXCAS":
         return {"action": "respond", "text": WELCOME_MESSAGE}
-    if normalized != "RETRY":
-        return None
     context = _gateway_event_context(event)
+    if normalized == "RETRY":
+        if context is None:
+            _operator_diagnostic("retry", "session_context", "session_context_unavailable")
+            return {"action": "respond", "text": SAFE_RETRY_MESSAGE}
+        pending = _take_retry(context)
+        if pending is None:
+            return {"action": "respond", "text": NO_PENDING_RETRY_MESSAGE}
+        action, payload = pending
+        result = json.loads(_call_bridge(action, payload, context))
+        customer_message = result.get("customerMessage")
+        if result.get("notifyCustomer") is True and isinstance(customer_message, str) and customer_message:
+            return {"action": "respond", "text": customer_message}
+        return {"action": "respond", "text": RETRY_ACCEPTED_MESSAGE}
     if context is None:
-        _operator_diagnostic("retry", "session_context", "session_context_unavailable")
+        return None
+    asset_ids = _ingest_event_images(event, context)
+    if asset_ids is None:
         return {"action": "respond", "text": SAFE_RETRY_MESSAGE}
-    pending = _take_retry(context)
-    if pending is None:
-        return {"action": "respond", "text": NO_PENDING_RETRY_MESSAGE}
-    action, payload = pending
-    result = json.loads(_call_bridge(action, payload, context))
-    customer_message = result.get("customerMessage")
-    if result.get("notifyCustomer") is True and isinstance(customer_message, str) and customer_message:
-        return {"action": "respond", "text": customer_message}
-    return {"action": "respond", "text": RETRY_ACCEPTED_MESSAGE}
+    if asset_ids:
+        original = str(getattr(event, "text", "") or "").strip()
+        asset_note = f"[Axcas verified merchant asset IDs: {', '.join(asset_ids)}]"
+        return {"action": "rewrite", "text": f"{asset_note}\n{original}".strip()}
+    return None
 
 
 def _handle_continue(params: dict[str, Any], **_kwargs: Any) -> str:
@@ -426,7 +474,7 @@ def _filter_llm_output(
 def register(ctx: Any) -> None:
     continue_schema = {
         "name": "axcas_continue",
-        "description": "Continue a validated Axcas merchant workflow without shell commands or credentials.",
+        "description": "Continue a validated Axcas merchant workflow. For Website or Both, use orchestrate_build with transcript, exact Axcas assetIds, and intent; do not use intake.",
         "parameters": {
             "type": "object",
             "properties": {

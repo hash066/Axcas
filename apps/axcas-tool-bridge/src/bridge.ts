@@ -9,6 +9,7 @@ import {
   type MerchantWorkflowInput,
 } from "../../strands-orchestrator/src";
 import { assertMerchantSafeText } from "../../../packages/whatsapp-io/src/merchant-language";
+import { StudioIntakeInputSchema } from "../../../packages/domain/src/studio";
 
 export const SAFE_RETRY_MESSAGE = "I couldn’t complete this step just now. Please reply RETRY; you won’t need to retype your business details.";
 
@@ -30,6 +31,7 @@ const BridgeActionSchema = z.enum([
   "reel",
   "metrics",
   "orchestrate_build",
+  "asset",
 ]);
 
 const BridgeRequestSchema = z.object({
@@ -48,6 +50,7 @@ export type BridgeResult = {
   previewExpiresAt?: number;
   specHash?: string;
   decision?: string;
+  assetIds?: string[];
 };
 
 type Submit = (command: PreparedCommand, env: NodeJS.ProcessEnv) => Promise<unknown>;
@@ -66,6 +69,14 @@ const SparseBuildPayloadSchema = MerchantWorkflowInputSchema.omit({ context: tru
   assetIds: true,
   now: true,
   improvementRequested: true,
+}).strict();
+
+const AssetPayloadSchema = z.object({
+  localAssetId: z.string().regex(/^[a-zA-Z0-9_-]{3,100}$/),
+  contentType: z.enum(["image/jpeg", "image/png", "image/webp"]),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  byteLength: z.number().int().min(1).max(16 * 1024 * 1024),
+  dataBase64: z.string().min(4).max(23 * 1024 * 1024),
 }).strict();
 
 export function parseBridgeRequest(value: unknown): BridgeRequest {
@@ -103,6 +114,42 @@ function normalizeBuildInput(payload: unknown, context: BridgeRequest["context"]
   });
 }
 
+function normalizeLegacyIntakeBuildInput(payload: unknown, context: BridgeRequest["context"]): MerchantWorkflowInput {
+  const value = z.record(z.string(), z.unknown()).parse(payload);
+  const catalog = Array.isArray(value.catalog) ? value.catalog : [];
+  const catalogFacts = catalog.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const record = item as Record<string, unknown>;
+    const parts = [record.name, record.description]
+      .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+      .map((entry) => entry.trim());
+    if (typeof record.priceMinor === "number" && Number.isFinite(record.priceMinor)) {
+      parts.push(`${record.currency === "USD" ? "USD" : "INR"} ${record.priceMinor / 100}`);
+    }
+    return parts;
+  });
+  const transcript = [
+    value.transcript,
+    value.businessName,
+    value.description,
+    value.fulfillmentArea,
+    value.leadTime,
+    ...catalogFacts,
+  ].filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0).join(". ").slice(0, 10_000);
+  if (!transcript) throw new Error("sparse intake has no merchant facts");
+  const explicitAssetIds = Array.isArray(value.assetIds) ? value.assetIds : [];
+  const catalogAssetIds = catalog.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const imageAssetId = (item as Record<string, unknown>).imageAssetId;
+    return typeof imageAssetId === "string" ? [imageAssetId] : [];
+  });
+  const assetIds = Array.from(new Set([...explicitAssetIds, ...catalogAssetIds])).filter(
+    (entry): entry is string => typeof entry === "string" && /^[a-zA-Z0-9_-]{3,128}$/.test(entry),
+  ).slice(0, 24);
+  const intent = value.intent === "both" || value.projectIntent === "both" ? "both" : "website";
+  return normalizeBuildInput({ transcript, assetIds, intent }, context);
+}
+
 function failureClass(error: unknown, stage: DiagnosticStage): string {
   const hasZodFailure = (candidate: unknown, depth = 0): boolean => {
     if (candidate instanceof z.ZodError) return true;
@@ -127,6 +174,20 @@ function failureClass(error: unknown, stage: DiagnosticStage): string {
 }
 
 async function prepare(request: BridgeRequest): Promise<PreparedCommand> {
+  if (request.action === "asset") {
+    const asset = AssetPayloadSchema.parse(request.payload);
+    const body = new Uint8Array(Buffer.from(asset.dataBase64, "base64"));
+    if (body.byteLength !== asset.byteLength || createHash("sha256").update(body).digest("hex") !== asset.sha256) {
+      throw new Error("asset digest mismatch");
+    }
+    return {
+      path: `/internal/assets/${asset.localAssetId}`,
+      method: "PUT",
+      body,
+      contentType: asset.contentType,
+      extraHeaders: { "x-proofgate-source-message-id": request.context.messageId },
+    };
+  }
   if (request.action === "metrics") {
     const metrics = z.object({
       siteId: z.string().regex(/^[a-z0-9-]{3,64}$/),
@@ -150,6 +211,9 @@ async function prepare(request: BridgeRequest): Promise<PreparedCommand> {
 
 function safeResult(action: BridgeRequest["action"], raw: unknown): BridgeResult {
   const value = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+  if (action === "asset" && typeof value.assetId === "string") {
+    return { status: "accepted", customerMessage: "", notifyCustomer: false, assetIds: [value.assetId] };
+  }
   if (action === "candidate" && typeof value.previewUrl === "string" && /^https:\/\//.test(value.previewUrl)) {
     return {
       status: "preview_ready",
@@ -235,6 +299,25 @@ export async function executeBridgeRequest(
     if (request.action === "orchestrate_build") {
       stage = "workflow_input";
       const workflowInput = normalizeBuildInput(request.payload, request.context);
+      stage = "workflow_execution";
+      const result = await runBuildWorkflow(workflowInput, new ProofGateBoundary(env, submit));
+      if (result.status === "awaiting_input") {
+        return { status: "accepted", customerMessage: consolidatedMissingFactsMessage(result.missingFacts), notifyCustomer: true };
+      }
+      if (result.status === "verification_failed") {
+        return { status: "accepted", customerMessage: "I found an issue while checking the preview. I’ll keep the current draft private until it passes.", notifyCustomer: true };
+      }
+      return {
+        status: "approval_sent",
+        customerMessage: "Your checked preview is ready. Review it, then use the single approval checklist I sent.",
+        previewUrl: result.previewUrl,
+        specHash: result.specHash,
+        notifyCustomer: true,
+      };
+    }
+    if (request.action === "intake" && !StudioIntakeInputSchema.safeParse(request.payload).success) {
+      stage = "workflow_input";
+      const workflowInput = normalizeLegacyIntakeBuildInput(request.payload, request.context);
       stage = "workflow_execution";
       const result = await runBuildWorkflow(workflowInput, new ProofGateBoundary(env, submit));
       if (result.status === "awaiting_input") {

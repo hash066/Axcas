@@ -780,7 +780,6 @@ describe("growth Worker", () => {
         authorization: "Bearer service-secret",
         "content-type": "image/jpeg",
         "x-hermes-user-id": owner,
-        "x-proofgate-merchant-id": tenant.merchantId,
         "x-proofgate-source-message-id": "wamid.photo-2",
       },
       body: jpeg,

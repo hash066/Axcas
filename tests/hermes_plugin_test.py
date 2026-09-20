@@ -2,6 +2,7 @@ import importlib.util
 import json
 import pathlib
 import sys
+import tempfile
 import types
 import unittest
 from unittest import mock
@@ -286,6 +287,41 @@ class MerchantOutputGuardTests(unittest.TestCase):
             self.plugin._route_gateway_control_message(event=event),
             {"action": "respond", "text": self.plugin.NO_PENDING_RETRY_MESSAGE},
         )
+
+    def test_gateway_ingests_real_whatsapp_image_and_rewrites_with_bound_asset_id(self):
+        with tempfile.TemporaryDirectory() as directory:
+            image_path = pathlib.Path(directory) / "merchant-cake.jpg"
+            image_path.write_bytes(b"\xff\xd8\xff\xdbmerchant-photo")
+            event = types.SimpleNamespace(
+                text="Hazelnut cake, I need both website and reels in Hubli",
+                message_id="wamid.photo",
+                media_urls=[str(image_path)],
+                media_types=["image/jpeg"],
+                source=types.SimpleNamespace(
+                    platform="whatsapp_cloud",
+                    user_id="919876543210",
+                    message_id="wamid.photo",
+                ),
+            )
+            with mock.patch.object(self.plugin, "_call_bridge", return_value=json.dumps({
+                "status": "accepted",
+                "customerMessage": "",
+                "notifyCustomer": False,
+                "assetIds": ["merchant-bound-cake-photo"],
+            })) as call_bridge:
+                routed = self.plugin._route_gateway_control_message(event=event)
+
+        self.assertEqual(routed, {
+            "action": "rewrite",
+            "text": "[Axcas verified merchant asset IDs: merchant-bound-cake-photo]\nHazelnut cake, I need both website and reels in Hubli",
+        })
+        action, payload, context = call_bridge.call_args.args
+        self.assertEqual(action, "asset")
+        self.assertEqual(context["messageId"], "wamid.photo")
+        self.assertEqual(payload["contentType"], "image/jpeg")
+        self.assertEqual(payload["byteLength"], len(b"\xff\xd8\xff\xdbmerchant-photo"))
+        self.assertRegex(payload["sha256"], r"^[a-f0-9]{64}$")
+        self.assertNotIn(str(image_path), json.dumps(payload))
 
     def test_bridge_failure_logs_only_operator_safe_classification(self):
         context = {"platform": "whatsapp_cloud", "userId": "919876543210", "messageId": "wamid.private"}
