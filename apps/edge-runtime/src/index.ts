@@ -26,8 +26,9 @@ import { createSocialCampaign, type SocialCampaign } from "../../../packages/soc
 import { sendActionRequiredTemplate, sendApprovalButtons, sendTextMessage, sendVideoByMediaId, uploadMetaMedia } from "../../../packages/whatsapp-io/src/meta-client";
 import { extractProofGateApproval, extractStudioLinkMessage, verifyMetaWebhookSignature } from "../../../packages/whatsapp-io/src/meta-webhook";
 
-type Bindings = {
+export type Bindings = {
   CONVEX_URL?: string;
+  CONVEX_SERVICE_SECRET?: string;
   META_APP_SECRET?: string;
   META_VERIFY_TOKEN?: string;
   VAPI_WEBHOOK_SECRET?: string;
@@ -333,9 +334,14 @@ function adminClient(bindings?: Bindings): ConvexHttpClient {
   return new ConvexHttpClient(bindings.CONVEX_URL);
 }
 
+export function resolveConvexServiceSecret(bindings?: Bindings): string {
+  const secret = bindings?.CONVEX_SERVICE_SECRET ?? bindings?.PROOFGATE_SERVICE_SECRET;
+  if (!secret) throw new Error("CONVEX_SERVICE_SECRET is not configured");
+  return secret;
+}
+
 function serviceSecret(bindings?: Bindings): string {
-  if (!bindings?.PROOFGATE_SERVICE_SECRET) throw new Error("PROOFGATE_SERVICE_SECRET is not configured");
-  return bindings.PROOFGATE_SERVICE_SECRET;
+  return resolveConvexServiceSecret(bindings);
 }
 
 const liveAdminBoundary: GrowthAdminBoundary = {

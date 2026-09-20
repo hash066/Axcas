@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { Script } from "node:vm";
 
-import { createApp, type GrowthAdminBoundary, type GrowthBoundary, type StudioVerifierBoundary } from "../../apps/edge-runtime/src/index";
+import { createApp, resolveConvexServiceSecret, type GrowthAdminBoundary, type GrowthBoundary, type StudioVerifierBoundary } from "../../apps/edge-runtime/src/index";
 import { initialBakerySiteSpec } from "../../packages/domain/src/growth";
 import { deriveTenantIdentity, tenantScopedAssetId } from "../../packages/domain/src/tenant";
 import { metaSignatureForTest } from "../../packages/whatsapp-io/src/meta-webhook";
@@ -86,6 +86,13 @@ async function hash(value: string): Promise<string> {
 }
 
 describe("growth Worker", () => {
+  it("keeps Hermes edge authentication separate from Convex administration", () => {
+    expect(resolveConvexServiceSecret({
+      PROOFGATE_SERVICE_SECRET: "edge-only-secret",
+      CONVEX_SERVICE_SECRET: "convex-only-secret",
+    })).toBe("convex-only-secret");
+  });
+
   it("serves a guided Product Hunt studio for website, reels, or both", async () => {
     const response = await createApp(undefined, boundary(), adminBoundary()).request("http://proofgate.test/studio", undefined, { AXCAS_WHATSAPP_NUMBER: "919999888877" } as never);
     expect(response.status).toBe(200);
