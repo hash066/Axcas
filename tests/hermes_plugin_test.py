@@ -288,7 +288,7 @@ class MerchantOutputGuardTests(unittest.TestCase):
             {"action": "respond", "text": self.plugin.NO_PENDING_RETRY_MESSAGE},
         )
 
-    def test_gateway_ingests_real_whatsapp_image_and_rewrites_with_bound_asset_id(self):
+    def test_gateway_ingests_real_whatsapp_image_and_starts_bound_build_without_model(self):
         with tempfile.TemporaryDirectory() as directory:
             image_path = pathlib.Path(directory) / "merchant-cake.jpg"
             image_path.write_bytes(b"\xff\xd8\xff\xdbmerchant-photo")
@@ -303,25 +303,71 @@ class MerchantOutputGuardTests(unittest.TestCase):
                     message_id="wamid.photo",
                 ),
             )
-            with mock.patch.object(self.plugin, "_call_bridge", return_value=json.dumps({
-                "status": "accepted",
-                "customerMessage": "",
-                "notifyCustomer": False,
-                "assetIds": ["merchant-bound-cake-photo"],
-            })) as call_bridge:
+            with mock.patch.object(self.plugin, "_call_bridge", side_effect=[
+                json.dumps({
+                    "status": "accepted",
+                    "customerMessage": "",
+                    "notifyCustomer": False,
+                    "assetIds": ["merchant-bound-cake-photo"],
+                }),
+                json.dumps({
+                    "status": "accepted",
+                    "customerMessage": "One quick thing before I build: what prices should I show?",
+                    "notifyCustomer": True,
+                }),
+            ]) as call_bridge:
                 routed = self.plugin._route_gateway_control_message(event=event)
 
         self.assertEqual(routed, {
-            "action": "rewrite",
-            "text": "[Axcas verified merchant asset IDs: merchant-bound-cake-photo]\nHazelnut cake, I need both website and reels in Hubli",
+            "action": "respond",
+            "text": "One quick thing before I build: what prices should I show?",
         })
-        action, payload, context = call_bridge.call_args.args
+        action, payload, context = call_bridge.call_args_list[0].args
         self.assertEqual(action, "asset")
         self.assertEqual(context["messageId"], "wamid.photo")
         self.assertEqual(payload["contentType"], "image/jpeg")
         self.assertEqual(payload["byteLength"], len(b"\xff\xd8\xff\xdbmerchant-photo"))
         self.assertRegex(payload["sha256"], r"^[a-f0-9]{64}$")
         self.assertNotIn(str(image_path), json.dumps(payload))
+        action, payload, context = call_bridge.call_args_list[1].args
+        self.assertEqual(action, "orchestrate_build")
+        self.assertEqual(payload, {
+            "transcript": "Hazelnut cake, I need both website and reels in Hubli",
+            "assetIds": ["merchant-bound-cake-photo"],
+            "intent": "both",
+        })
+        self.assertEqual(context["messageId"], "wamid.photo")
+
+    def test_gateway_explicit_build_request_never_depends_on_model_tool_choice(self):
+        event = types.SimpleNamespace(
+            text="Build my bakery website and reels using what I already sent",
+            message_id="wamid.direct-build",
+            source=types.SimpleNamespace(
+                platform="whatsapp_cloud",
+                user_id="919876543210",
+                message_id="wamid.direct-build",
+            ),
+        )
+        with mock.patch.object(self.plugin, "_call_bridge", return_value=json.dumps({
+            "status": "accepted",
+            "customerMessage": "Please send at least one real business photo.",
+            "notifyCustomer": True,
+        })) as call_bridge:
+            routed = self.plugin._route_gateway_control_message(event=event)
+
+        self.assertEqual(routed, {
+            "action": "respond",
+            "text": "Please send at least one real business photo.",
+        })
+        call_bridge.assert_called_once_with("orchestrate_build", {
+            "transcript": "Build my bakery website and reels using what I already sent",
+            "assetIds": [],
+            "intent": "both",
+        }, {
+            "platform": "whatsapp_cloud",
+            "userId": "919876543210",
+            "messageId": "wamid.direct-build",
+        })
 
     def test_bridge_failure_logs_only_operator_safe_classification(self):
         context = {"platform": "whatsapp_cloud", "userId": "919876543210", "messageId": "wamid.private"}

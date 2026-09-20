@@ -333,6 +333,32 @@ def _ingest_event_images(event: Any, context: dict[str, str]) -> list[str] | Non
     return asset_ids
 
 
+def _requested_build_intent(text: str) -> str | None:
+    """Recognize explicit site requests before an LLM can choose to ignore Axcas."""
+    normalized = " ".join(text.lower().split())
+    wants_site = re.search(r"\b(?:website|web\s*site|webpage|landing\s+page|business\s+site)\b", normalized) is not None
+    wants_reel = re.search(r"\b(?:reels?|short\s+videos?|video\s+ads?|ad\s+creatives?)\b", normalized) is not None
+    if wants_site and wants_reel:
+        return "both"
+    if wants_site:
+        return "website"
+    return None
+
+
+def _direct_build_response(raw: str) -> dict[str, str]:
+    try:
+        result = json.loads(raw)
+        customer_message = result.get("customerMessage")
+        if result.get("notifyCustomer") is True and isinstance(customer_message, str) and customer_message:
+            return {"action": "respond", "text": customer_message}
+        if result.get("status") == "temporarily_unavailable":
+            return {"action": "respond", "text": SAFE_RETRY_MESSAGE}
+        return {"action": "respond", "text": RETRY_ACCEPTED_MESSAGE}
+    except Exception:
+        _operator_diagnostic("orchestrate_build", "bridge_response", "invalid_bridge_response")
+        return {"action": "respond", "text": SAFE_RETRY_MESSAGE}
+
+
 def _route_gateway_control_message(event: Any = None, **_kwargs: Any) -> dict[str, str] | None:
     """Short-circuit exact public control messages before any model request."""
     source = getattr(event, "source", None)
@@ -361,8 +387,15 @@ def _route_gateway_control_message(event: Any = None, **_kwargs: Any) -> dict[st
     asset_ids = _ingest_event_images(event, context)
     if asset_ids is None:
         return {"action": "respond", "text": SAFE_RETRY_MESSAGE}
+    original = str(getattr(event, "text", "") or "").strip()
+    intent = _requested_build_intent(original)
+    if intent is not None:
+        return _direct_build_response(_call_bridge("orchestrate_build", {
+            "transcript": original,
+            "assetIds": asset_ids,
+            "intent": intent,
+        }, context))
     if asset_ids:
-        original = str(getattr(event, "text", "") or "").strip()
         asset_note = f"[Axcas verified merchant asset IDs: {', '.join(asset_ids)}]"
         return {"action": "rewrite", "text": f"{asset_note}\n{original}".strip()}
     return None
