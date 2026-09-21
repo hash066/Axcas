@@ -15,6 +15,8 @@ import {
 } from "@strands-agents/sdk";
 
 import {
+  actualMissingFacts,
+  resolveIntakeAssessment,
   runMerchantWorkflow,
   type AxcasBoundary,
   type StructuredAgent,
@@ -129,6 +131,33 @@ const input = {
 };
 
 describe("Strands merchant workflow", () => {
+  it("preserves explicit WhatsApp facts when model extraction returns blanks", () => {
+    const transcript = "My business is Sunrise Bakes, a home bakery in Hubli. I make hazelnut cakes, brownies, and sourdough. Customers should contact +91 98765 43210 on WhatsApp. I serve Hubli city and need 24 hours' notice. Hazelnut cake is ₹650, a brownie box is ₹350, and sourdough is ₹180. I want Both—a website and Reels.";
+    const modelOutput = {
+      timezone: "Asia/Kolkata",
+      suppliedClaims: [],
+      catalog: [],
+      missingFacts: ["businessName", "description", "orderWhatsAppNumber", "fulfillmentArea", "leadTime", "offerings", "photos"],
+    };
+
+    const grounded = resolveIntakeAssessment(modelOutput, transcript, ["merchant-cake-photo"]);
+
+    expect(grounded).toMatchObject({
+      businessType: "home_bakery",
+      businessName: "Sunrise Bakes",
+      orderWhatsAppNumber: "+919876543210",
+      fulfillmentArea: "Hubli city",
+      leadTime: "24 hours",
+    });
+    expect(grounded.description).toContain("home bakery in Hubli");
+    expect(grounded.catalog).toEqual([
+      expect.objectContaining({ name: "Hazelnut cake", priceMinor: 65000, currency: "INR", imageAssetId: "merchant-cake-photo" }),
+      expect.objectContaining({ name: "brownie box", priceMinor: 35000, currency: "INR", imageAssetId: "merchant-cake-photo" }),
+      expect.objectContaining({ name: "sourdough", priceMinor: 18000, currency: "INR", imageAssetId: "merchant-cake-photo" }),
+    ]);
+    expect(actualMissingFacts(grounded, ["merchant-cake-photo"])).toEqual([]);
+  });
+
   it("asks one consolidated, customer-safe question when intake is incomplete", async () => {
     const agent = agentWith({ ...assessment, orderWhatsAppNumber: undefined, leadTime: undefined, missingFacts: ["orderWhatsAppNumber", "leadTime"] });
     const api = boundary();
@@ -137,8 +166,8 @@ describe("Strands merchant workflow", () => {
 
     expect(result).toEqual({
       status: "awaiting_input",
-      missingFacts: ["orderWhatsAppNumber", "leadTime"],
-      customerMessages: ["One quick thing before I build: what WhatsApp number should customers contact, and how much advance notice do you need?"],
+      missingFacts: ["orderWhatsAppNumber"],
+      customerMessages: ["One quick thing before I build: what WhatsApp number should customers contact?"],
     });
     expect(api.execute).not.toHaveBeenCalled();
     expect(JSON.stringify(result)).not.toMatch(/command|credential|cloudflare|convex|hermes|vapi|PROOFGATE/i);

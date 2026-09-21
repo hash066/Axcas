@@ -65,7 +65,7 @@ class WorkflowToolState {
 
   async captureIntake(value: unknown) {
     if (this.stage !== "new") throw new Error("intake has already been captured");
-    const assessment = resolveIntakeAssessment(value, this.input.transcript);
+    const assessment = resolveIntakeAssessment(value, this.input.transcript, this.input.assetIds);
     const missingFacts = actualMissingFacts(assessment, this.input.assetIds);
     if (missingFacts.length) {
       this.stage = "awaiting_input";

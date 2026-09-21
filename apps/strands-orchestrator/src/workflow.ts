@@ -49,7 +49,10 @@ const factLabels: Record<MissingFact, string> = {
 };
 
 export function actualMissingFacts(assessment: IntakeAssessment, suppliedAssets: readonly string[]): MissingFact[] {
-  const missing = new Set<MissingFact>(assessment.missingFacts);
+  // Required fields are the authority. A model-provided missingFacts list is
+  // advisory only and may not contradict facts already grounded from the
+  // authenticated merchant bundle.
+  const missing = new Set<MissingFact>();
   if (!assessment.businessName) missing.add("businessName");
   if (!assessment.description) missing.add("description");
   if (!assessment.orderWhatsAppNumber) missing.add("orderWhatsAppNumber");
@@ -60,14 +63,74 @@ export function actualMissingFacts(assessment: IntakeAssessment, suppliedAssets:
   return Array.from(missing);
 }
 
-export function resolveIntakeAssessment(value: unknown, transcript: string): IntakeAssessment {
+function firstSentence(value: string): string | undefined {
+  const sentence = value.trim().split(/(?<=[.!?])\s+/u)[0]?.trim();
+  return sentence ? sentence.slice(0, 500) : undefined;
+}
+
+function extractBusinessName(transcript: string): string | undefined {
+  const match = transcript.match(/\b(?:my business is|business is|i run|we run|we are)\s+([^,.!?\n]+?)(?=\s*,\s*(?:an?|the)\b|[.!?\n]|$)/iu);
+  return match?.[1]?.trim().slice(0, 500);
+}
+
+function extractOrderNumber(transcript: string): string | undefined {
+  const match = transcript.match(/\+\s*([1-9][\d\s()-]{6,20}\d)/u);
+  if (!match?.[1]) return undefined;
+  const normalized = `+${match[1].replace(/\D/g, "")}`;
+  return /^\+[1-9]\d{7,14}$/.test(normalized) ? normalized : undefined;
+}
+
+function extractFulfillmentArea(transcript: string): string | undefined {
+  const match = transcript.match(/\b(?:i|we)\s+(?:serve|deliver(?:\s+to)?|operate(?:\s+in)?)\s+(.+?)(?=\s+and\s+(?:need|require|offer|take)\b|[.!?\n]|$)/iu);
+  return match?.[1]?.trim().slice(0, 500);
+}
+
+function extractLeadTime(transcript: string): string | undefined {
+  const match = transcript.match(/\b(?:need|require|take|lead\s*time(?:\s+is)?)\s+(\d+\s*(?:hours?|days?|weeks?))(?:['’]?\s+notice)?\b/iu);
+  return match?.[1]?.replace(/\s+/g, " ").trim();
+}
+
+function extractPricedCatalog(transcript: string, assetIds: readonly string[]): IntakeAssessment["catalog"] {
+  const imageAssetId = assetIds[0];
+  if (!imageAssetId) return [];
+  const catalog: IntakeAssessment["catalog"] = [];
+  const pricePattern = /(?:^|[.!?]\s*|[,;]\s*|\band\s+)(?:an?\s+)?([\p{L}][\p{L}\d '&/-]{1,80}?)\s+is\s+(₹|rs\.?|inr|\$)\s*(\d+(?:,\d{3})*(?:\.\d{1,2})?)/giu;
+  for (const match of transcript.matchAll(pricePattern)) {
+    const name = match[1]?.trim().replace(/^and\s+/iu, "");
+    const amount = Number(match[3]?.replace(/,/g, ""));
+    if (!name || !Number.isFinite(amount) || amount < 0) continue;
+    const currency = match[2] === "$" ? "USD" : "INR";
+    catalog.push({ name, priceMinor: Math.round(amount * 100), currency, imageAssetId });
+  }
+  return catalog.slice(0, 24);
+}
+
+export function resolveIntakeAssessment(value: unknown, transcript: string, assetIds: readonly string[] = []): IntakeAssessment {
   const modelInput = IntakeToolInputSchema.parse(value);
+  const groundedCatalog = extractPricedCatalog(transcript, assetIds);
+  const grounded = {
+    businessName: extractBusinessName(transcript),
+    description: firstSentence(transcript),
+    orderWhatsAppNumber: extractOrderNumber(transcript),
+    fulfillmentArea: extractFulfillmentArea(transcript),
+    leadTime: extractLeadTime(transcript),
+  };
+  const merged = {
+    ...modelInput,
+    businessName: grounded.businessName ?? modelInput.businessName,
+    description: grounded.description ?? modelInput.description,
+    orderWhatsAppNumber: grounded.orderWhatsAppNumber ?? modelInput.orderWhatsAppNumber,
+    fulfillmentArea: grounded.fulfillmentArea ?? modelInput.fulfillmentArea,
+    leadTime: grounded.leadTime ?? modelInput.leadTime,
+    catalog: groundedCatalog.length ? groundedCatalog : modelInput.catalog,
+  };
   const businessType = inferStudioBusinessType([
     transcript,
-    modelInput.businessName,
+    merged.businessName,
+    merged.description,
     modelInput.description,
   ].filter((part): part is string => Boolean(part)).join(" "));
-  return IntakeAssessmentSchema.parse({ ...modelInput, businessType });
+  return IntakeAssessmentSchema.parse({ ...merged, businessType });
 }
 
 export function consolidatedQuestion(missing: MissingFact[]): string {
@@ -119,7 +182,7 @@ export function workflowVersionId(workflowId: string): string {
 export async function runMerchantWorkflow(inputValue: unknown, dependencies: WorkflowDependencies) {
   const input = MerchantWorkflowInputSchema.parse(inputValue);
   const intakeResult = await dependencies.agent.invoke(intakePrompt(input), { structuredOutputSchema: IntakeToolInputSchema });
-  const assessment = resolveIntakeAssessment(intakeResult.structuredOutput, input.transcript);
+  const assessment = resolveIntakeAssessment(intakeResult.structuredOutput, input.transcript, input.assetIds);
   const missingFacts = actualMissingFacts(assessment, input.assetIds);
   if (missingFacts.length) {
     return { status: "awaiting_input" as const, missingFacts, customerMessages: [consolidatedQuestion(missingFacts)] };
