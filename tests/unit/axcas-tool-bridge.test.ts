@@ -59,6 +59,50 @@ describe("Axcas typed tool bridge", () => {
     expect(store.clear).toHaveBeenCalledOnce();
   });
 
+  it("does not replace a delivered approval with a retry message when draft cleanup fails", async () => {
+    const saved = {
+      schemaVersion: 1 as const,
+      input: {
+        schemaVersion: 1 as const,
+        workflowId: "workflow-cleanup-failure",
+        projectId: "project-cleanup-failure",
+        intent: "both" as const,
+        transcript: "Golden Crust sells cakes in Hubli.",
+        assetIds: ["asset-cake-one"],
+        now: Date.now(),
+        improvementRequested: false,
+        context,
+      },
+      askedQuestion: false,
+      checkpoint: "candidate_ready" as const,
+      operationIds: ["workflow-cleanup-failure"],
+      expiresAt: Math.floor(Date.now() / 1000) + 86_400,
+      updatedAt: Date.now(),
+    };
+    const store: WorkflowDraftStore = {
+      save: vi.fn(async () => undefined),
+      load: vi.fn(async () => saved),
+      clear: vi.fn(async () => { throw new Error("DeleteItem is not authorized"); }),
+    };
+    const result = await executeBridgeRequest(
+      { action: "retry", context: { ...context, messageId: "wamid.retry-cleanup" }, payload: {} },
+      vi.fn(),
+      { PROOFGATE_ADMIN_URL: "https://example.workers.dev", PROOFGATE_SERVICE_SECRET: "server-only-secret-material-12345" },
+      async () => ({
+        status: "awaiting_approval" as const,
+        approvalId: "approval-cleanup-failure",
+        previewUrl: "https://example.workers.dev/preview/signed-preview",
+        specHash: "a".repeat(64),
+        verificationRunId: "verify-cleanup-failure",
+      }),
+      store,
+    );
+
+    expect(result).toMatchObject({ status: "approval_sent", previewUrl: "https://example.workers.dev/preview/signed-preview" });
+    expect(result.customerMessage).not.toBe(SAFE_RETRY_MESSAGE);
+    expect(store.clear).toHaveBeenCalledOnce();
+  });
+
   it("keeps the durable merchant draft when independent verification is temporarily unavailable", async () => {
     let saved: any = null;
     const store: WorkflowDraftStore = {

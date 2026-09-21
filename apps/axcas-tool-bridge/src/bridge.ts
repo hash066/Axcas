@@ -315,6 +315,29 @@ function consolidatedMissingFactsMessage(missingFacts: readonly string[]): strin
   return message;
 }
 
+async function clearCompletedDraft(
+  store: WorkflowDraftStore | null,
+  context: MerchantWorkflowInput["context"],
+  correlationId: string,
+  action: "retry" | "orchestrate_build",
+): Promise<void> {
+  if (!store) return;
+  try {
+    await store.clear(context);
+  } catch {
+    // Approval delivery is an externally visible success. Cleanup must never replace
+    // that result with a retry message or repeat the already-created approval.
+    process.stderr.write(`${JSON.stringify({
+      service: "axcas-tool-bridge",
+      correlationId,
+      action,
+      stage: "draft_cleanup",
+      failure: "dependency_unavailable",
+      outcome: "approval_preserved",
+    })}\n`);
+  }
+}
+
 export async function executeBridgeRequest(
   input: unknown,
   submit: Submit = submitCommand,
@@ -346,7 +369,7 @@ export async function executeBridgeRequest(
         await draftStore?.save(saved.input, { askedQuestion: saved.askedQuestion, checkpoint: "candidate_ready", operationIds: saved.operationIds });
         return { status: "accepted", customerMessage: "I found an issue while checking the preview. I’ll keep the current draft private until it passes.", notifyCustomer: true };
       }
-      await draftStore?.clear(request.context);
+      await clearCompletedDraft(draftStore, request.context, correlationId, "retry");
       return { status: "approval_sent", customerMessage: `Your checked preview is ready: ${result.previewUrl}\n\nReview it, then use the single approval checklist I sent. Open Axcas Studio: ${new URL(env.PROOFGATE_ADMIN_URL!).origin}/studio`, previewUrl: result.previewUrl, specHash: result.specHash, notifyCustomer: true };
     }
     if (request.action === "orchestrate_build") {
@@ -364,7 +387,7 @@ export async function executeBridgeRequest(
         await draftStore?.save(workflowInput, { askedQuestion: existing?.askedQuestion ?? false, checkpoint: "candidate_ready", operationIds: existing?.operationIds ?? [workflowInput.workflowId] });
         return { status: "accepted", customerMessage: "I found an issue while checking the preview. I’ll keep the current draft private until it passes.", notifyCustomer: true };
       }
-      await draftStore?.clear(request.context);
+      await clearCompletedDraft(draftStore, request.context, correlationId, "orchestrate_build");
       return {
         status: "approval_sent",
         customerMessage: `Your checked preview is ready: ${result.previewUrl}\n\nReview it, then use the single approval checklist I sent. Open Axcas Studio: ${new URL(env.PROOFGATE_ADMIN_URL!).origin}/studio`,

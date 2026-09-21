@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DeleteCommand, DynamoDBDocumentClient, GetCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, GetCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 
 import { MerchantWorkflowInputSchema, type MerchantWorkflowInput } from "../../strands-orchestrator/src/schemas";
 
@@ -71,6 +71,20 @@ export function createWorkflowDraftStore(env: NodeJS.ProcessEnv = process.env): 
       if (typeof draftJson !== "string" || typeof expiresAt !== "number" || expiresAt < Math.floor(Date.now() / 1000)) return null;
       return MerchantDraftV1Schema.parse(JSON.parse(draftJson));
     },
-    clear: async (context) => { await client.send(new DeleteCommand({ TableName: tableName, Key: key(context) })); },
+    clear: async (context) => {
+      const now = Date.now();
+      // The runtime role deliberately has no broad DeleteItem capability. Replace the
+      // sensitive draft with an already-expired, content-free tombstone; DynamoDB TTL
+      // removes it asynchronously and load() treats it as absent immediately.
+      await client.send(new PutCommand({
+        TableName: tableName,
+        Item: {
+          ...key(context),
+          entityType: "merchant_workflow_draft_tombstone",
+          expiresAt: Math.floor(now / 1000) - 1,
+          updatedAt: now,
+        },
+      }));
+    },
   };
 }
