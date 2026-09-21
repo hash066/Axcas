@@ -106,6 +106,16 @@ describe("AWS-native production architecture", () => {
     expect((template.match(/Name: AXCAS_SITE_VERIFIER_URL/g) ?? [])).toHaveLength(2);
   });
 
+  it("pulls production base images through the AWS public mirror", () => {
+    for (const dockerfile of [controlPlaneDockerfile, workerDockerfile, hermesDockerfile]) {
+      const source = readFileSync(dockerfile, "utf8");
+      expect(source).not.toMatch(/^FROM (?:node|python):/m);
+    }
+    expect(readFileSync(controlPlaneDockerfile, "utf8")).toContain("public.ecr.aws/docker/library/node:22-bookworm-slim");
+    expect(readFileSync(workerDockerfile, "utf8")).toContain("public.ecr.aws/docker/library/node:22-bookworm-slim");
+    expect(readFileSync(hermesDockerfile, "utf8")).toContain("public.ecr.aws/docker/library/python:3.11-slim-bookworm");
+  });
+
   it("keeps Hermes operator onboarding out of the public WhatsApp channel", () => {
     const patch = readFileSync(hermesPublicChannelPatch, "utf8");
 
