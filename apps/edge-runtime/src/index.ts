@@ -365,6 +365,12 @@ function serviceSecret(bindings?: Bindings): string {
   return resolveConvexServiceSecret(bindings);
 }
 
+function previewSigningSecret(bindings?: Bindings): string {
+  const secret = bindings?.PROOFGATE_SERVICE_SECRET;
+  if (!secret) throw new Error("PROOFGATE_SERVICE_SECRET is not configured");
+  return secret;
+}
+
 const liveAdminBoundary: GrowthAdminBoundary = {
   upsertMerchant: (brief, encryptedOrderNumber, bindings) => adminClient(bindings).action((api as any).growth.adminUpsertMerchant, { serviceSecret: serviceSecret(bindings), merchantId: brief.merchantId, ownerWaIdHash: brief.ownerWaIdHash, name: brief.businessName, timezone: brief.timezone, orderWhatsAppNumberCiphertext: encryptedOrderNumber, createdAt: Date.now() }),
   createCandidate: (input, bindings) => adminClient(bindings).action((api as any).growth.adminCreateCandidate, { serviceSecret: serviceSecret(bindings), merchantId: input.spec.business.merchantId, slug: input.spec.siteId, versionId: input.versionId, parentVersionId: input.parentVersionId, specJson: JSON.stringify(input.spec), specHash: input.specHash, actor: input.actor, createdAt: Date.now() }),
@@ -883,7 +889,7 @@ export function createApp(evidenceBoundary: EvidenceBoundary = liveEvidenceBound
     const specHash = await sha256(canonicalize(built.spec));
     await adminBoundary.createCandidate({ spec: built.spec, versionId, specHash, actor: `studio:${session.ownerWaIdHash}` }, context.env);
     const previewExpiresAt = Date.now() + 24 * 60 * 60_000;
-    const previewToken = await createPreviewToken({ siteId: built.spec.siteId, versionId, specHash, expiresAt: previewExpiresAt }, serviceSecret(context.env));
+    const previewToken = await createPreviewToken({ siteId: built.spec.siteId, versionId, specHash, expiresAt: previewExpiresAt }, previewSigningSecret(context.env));
     const origin = new URL(context.req.url).origin;
     const previewUrl = `${origin}/preview/${previewToken}`;
     if (!context.env?.SITE_VERIFIER_URL) {
@@ -1395,7 +1401,7 @@ export function createApp(evidenceBoundary: EvidenceBoundary = liveEvidenceBound
       : proposedSpecHash;
     if (!/^[a-f0-9]{64}$/.test(persistedSpecHash)) return context.text("Invalid persisted candidate scope", 500);
     const previewExpiresAt = Date.now() + 24 * 60 * 60_000;
-    const previewToken = await createPreviewToken({ siteId: spec.siteId, versionId: payload.versionId, specHash: persistedSpecHash, expiresAt: previewExpiresAt }, serviceSecret(context.env));
+    const previewToken = await createPreviewToken({ siteId: spec.siteId, versionId: payload.versionId, specHash: persistedSpecHash, expiresAt: previewExpiresAt }, previewSigningSecret(context.env));
     const previewUrl = `${new URL(context.req.url).origin}/preview/${previewToken}`;
     return context.json({ accepted: true, specHash: persistedSpecHash, previewUrl, previewExpiresAt, result }, 201);
   });

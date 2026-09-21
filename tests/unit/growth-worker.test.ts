@@ -666,13 +666,16 @@ describe("growth Worker", () => {
       method: "POST",
       headers: { authorization: "Bearer service-secret", "content-type": "application/json", "x-hermes-user-id": owner },
       body: JSON.stringify({ versionId: "bakery-v1", spec }),
-    }, { PROOFGATE_SERVICE_SECRET: "service-secret" });
+    }, { PROOFGATE_SERVICE_SECRET: "service-secret", CONVEX_SERVICE_SECRET: "convex-only-secret" });
     expect(response.status).toBe(201);
     const result = await response.json() as { previewUrl: string; previewExpiresAt: number };
     expect(result.previewUrl).toMatch(/^http:\/\/proofgate\.test\/preview\/pgp_[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
     expect(result.previewExpiresAt).toBeGreaterThan(Date.now());
 
-    const preview = await createApp(undefined, boundary(), admin).request(result.previewUrl, {}, { PROOFGATE_SERVICE_SECRET: "service-secret" });
+    const preview = await createApp(undefined, boundary(), admin).request(result.previewUrl, {}, {
+      PROOFGATE_SERVICE_SECRET: "service-secret",
+      CONVEX_SERVICE_SECRET: "convex-only-secret",
+    });
     expect(preview.status).toBe(200);
     expect(preview.headers.get("cache-control")).toBe("private, no-store");
     expect(preview.headers.get("x-robots-tag")).toBe("noindex, nofollow");
