@@ -227,6 +227,27 @@ describe("native Strands typed-tool loop", () => {
     expect(api.execute).toHaveBeenCalledWith("intake", expect.objectContaining({ businessType: "home_bakery" }), context);
   });
 
+  it("canonicalizes a formatted merchant WhatsApp number before candidate validation", async () => {
+    const api = boundary();
+    const workflow = createWorkflowTools(input, api);
+    const intakeTool = workflow.tools.find((item) => item.name === "capture_merchant_intake")!;
+    const candidateTool = workflow.tools.find((item) => item.name === "create_site_candidate")!;
+
+    await intakeTool.invoke(assessment);
+    await expect(candidateTool.invoke({
+      spec: {
+        ...spec,
+        business: { ...spec.business, orderWhatsAppNumber: "+91 98765 43210" },
+      },
+    })).resolves.toMatchObject({ status: "candidate_ready" });
+
+    expect(api.execute).toHaveBeenCalledWith("candidate", expect.objectContaining({
+      spec: expect.objectContaining({
+        business: expect.objectContaining({ orderWhatsAppNumber: "+919876543210" }),
+      }),
+    }), context);
+  });
+
   it("returns one consolidated missing-facts question without asking for a business-type enum", async () => {
     const api = boundary();
     const { businessType: _modelGuess, ...withoutBusinessType } = assessment;

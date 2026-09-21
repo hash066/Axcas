@@ -85,9 +85,31 @@ export const PublishedImprovementInputSchema = z.object({
 });
 export type PublishedImprovementInput = z.infer<typeof PublishedImprovementInputSchema>;
 
-export const CandidateEnvelopeSchema = z.object({
-  spec: SiteSpecV2Schema,
-}).strict();
+function canonicalizeCandidateOrderNumber(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const envelope = value as Record<string, unknown>;
+  if (!envelope.spec || typeof envelope.spec !== "object" || Array.isArray(envelope.spec)) return value;
+  const spec = envelope.spec as Record<string, unknown>;
+  if (!spec.business || typeof spec.business !== "object" || Array.isArray(spec.business)) return value;
+  const business = spec.business as Record<string, unknown>;
+  if (typeof business.orderWhatsAppNumber !== "string") return value;
+  const rawNumber = business.orderWhatsAppNumber.trim();
+  if (!rawNumber.startsWith("+")) return value;
+  const normalized = `+${rawNumber.slice(1).replace(/\D/g, "")}`;
+  if (!/^\+[1-9]\d{7,14}$/.test(normalized)) return value;
+  return {
+    ...envelope,
+    spec: {
+      ...spec,
+      business: { ...business, orderWhatsAppNumber: normalized },
+    },
+  };
+}
+
+export const CandidateEnvelopeSchema = z.preprocess(
+  canonicalizeCandidateOrderNumber,
+  z.object({ spec: SiteSpecV2Schema }).strict(),
+);
 
 export const MetricsSchema = z.object({
   qualifiedViews: z.number().int().nonnegative(),
