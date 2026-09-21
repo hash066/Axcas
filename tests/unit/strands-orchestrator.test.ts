@@ -16,6 +16,7 @@ import {
 
 import {
   actualMissingFacts,
+  compileSiteSpec,
   resolveIntakeAssessment,
   runMerchantWorkflow,
   type AxcasBoundary,
@@ -128,9 +129,55 @@ const input = {
   transcript: "Golden Crust sells sourdough in Hubli for 180 rupees. Orders need 24 hours.",
   assetIds: ["asset-bread-1"],
   now: 2_000,
+  improvementRequested: false,
 };
 
 describe("Strands merchant workflow", () => {
+  it("compiles authoritative SiteSpec fields deterministically from validated intake", () => {
+    const compiled = compileSiteSpec(assessment, {
+      heroHeadline: "Hubli sourdough, baked for tomorrow",
+      heroSubheadline: "Order directly on WhatsApp.",
+      offeringDescriptions: ["Slow-fermented and baked to order."],
+    }, "merchant-demo", input);
+
+    expect(compiled).toMatchObject({
+      schemaVersion: 2,
+      businessType: "home_bakery",
+      business: {
+        merchantId: "merchant-demo",
+        name: "Golden Crust",
+        orderWhatsAppNumber: "+919876543210",
+      },
+      hero: { imageAssetId: "asset-bread-1" },
+      catalog: [{
+        name: "Sourdough loaf",
+        priceMinor: 18000,
+        currency: "INR",
+        imageAssetId: "asset-bread-1",
+      }],
+    });
+    expect(compiled.siteId).toMatch(/^golden-crust-/);
+    expect(compiled.proofBadge.passportSlug).toBe(compiled.siteId);
+  });
+
+  it("continues with safe deterministic copy when candidate generation fails", async () => {
+    const agent: StructuredAgent = {
+      invoke: vi.fn()
+        .mockResolvedValueOnce({ structuredOutput: assessment })
+        .mockRejectedValueOnce(new Error("provider formatting failure")),
+    };
+    const api = boundary();
+
+    const result = await runMerchantWorkflow(input, { agent, boundary: api });
+
+    expect(result).toMatchObject({ status: "awaiting_approval", approvalId: "approval-demo" });
+    expect(api.execute).toHaveBeenCalledWith("candidate", expect.objectContaining({
+      spec: expect.objectContaining({
+        business: expect.objectContaining({ merchantId: "merchant-demo", orderWhatsAppNumber: "+919876543210" }),
+      }),
+    }), context);
+  });
+
   it("preserves explicit WhatsApp facts when model extraction returns blanks", () => {
     const transcript = "My business is Sunrise Bakes, a home bakery in Hubli. I make hazelnut cakes, brownies, and sourdough. Customers should contact +91 98765 43210 on WhatsApp. I serve Hubli city and need 24 hours' notice. Hazelnut cake is ₹650, a brownie box is ₹350, and sourdough is ₹180. I want Both—a website and Reels.";
     const modelOutput = {
@@ -174,7 +221,15 @@ describe("Strands merchant workflow", () => {
   });
 
   it("owns the verified candidate-to-approval workflow and stops before publication", async () => {
-    const agent = agentWith(assessment, spec);
+    const agent = agentWith(assessment, {
+      businessDescription: spec.business.description,
+      heroHeadline: spec.hero.headline,
+      heroSubheadline: spec.hero.subheadline,
+      ctaLabel: spec.whatsappCta.label,
+      seoTitle: spec.seo.title,
+      seoDescription: spec.seo.description,
+      offeringDescriptions: spec.catalog.map((item) => item.description),
+    });
     const api = boundary();
 
     const result = await runMerchantWorkflow(input, { agent, boundary: api });
@@ -201,18 +256,22 @@ describe("Strands merchant workflow", () => {
   it("stops before approval and metrics when independent verification fails", async () => {
     const api = boundary({ dispatchVerification: vi.fn(async () => ({ accepted: true, passed: false, blockers: ["unsafe_content_security_policy"], runId: "verify-failed" })) });
 
-    const result = await runMerchantWorkflow(input, { agent: agentWith(assessment, spec), boundary: api });
+    const result = await runMerchantWorkflow(input, { agent: agentWith(assessment, {}), boundary: api });
 
     expect(result).toMatchObject({ status: "verification_failed", blockers: ["unsafe_content_security_policy"] });
     expect(vi.mocked(api.execute).mock.calls.map(([action]) => action)).toEqual(["intake", "candidate"]);
   });
 
-  it("rejects model output that introduces unsupplied assets or claims", async () => {
+  it("ignores model attempts to introduce authoritative assets or claims", async () => {
     const api = boundary();
-    const unsafeSpec = { ...spec, hero: { ...spec.hero, imageAssetId: "synthetic-image" } };
+    const unsafeCopy = { heroHeadline: "Fresh bread", imageAssetId: "synthetic-image", suppliedClaims: ["Award winning"] };
 
-    await expect(runMerchantWorkflow(input, { agent: agentWith(assessment, unsafeSpec), boundary: api })).rejects.toThrow("candidate contains an asset that the merchant did not supply");
-    expect(vi.mocked(api.execute).mock.calls.map(([action]) => action)).toEqual(["intake"]);
+    const result = await runMerchantWorkflow(input, { agent: agentWith(assessment, unsafeCopy), boundary: api });
+
+    expect(result.status).toBe("awaiting_approval");
+    const candidate = vi.mocked(api.execute).mock.calls.find(([action]) => action === "candidate")?.[1] as { spec: typeof spec };
+    expect(candidate.spec.hero.imageAssetId).toBe("asset-bread-1");
+    expect(candidate.spec.suppliedClaims).toEqual(["Baked to order"]);
   });
 });
 

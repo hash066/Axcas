@@ -37,7 +37,12 @@ export const MERCHANT_LANGUAGE_RULES: readonly MerchantLanguageRule[] = [
 
 /** Returns the names of every rule the text violates, in declaration order. */
 export function findMerchantLanguageViolations(value: string): readonly string[] {
-  return MERCHANT_LANGUAGE_RULES.filter((rule) => rule.pattern.test(value)).map((rule) => rule.name);
+  // Public preview, site, Studio, and media URLs are intentional customer
+  // capabilities. Inspect the surrounding prose, not opaque URL internals;
+  // otherwise a legacy hostname or signed preview token blocks every useful
+  // completion message. Only HTTPS links are redacted from lexical scanning.
+  const prose = value.replace(/https:\/\/[^\s<>()]+/gi, "[customer-link]");
+  return MERCHANT_LANGUAGE_RULES.filter((rule) => rule.pattern.test(prose)).map((rule) => rule.name);
 }
 
 /**

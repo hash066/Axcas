@@ -628,17 +628,33 @@ export const resolveApprovalTap = mutation({
   },
   handler: async (context, args) => {
     const approval = await context.db.query("approvals").withIndex("by_approval_id", (range) => range.eq("approvalId", args.approvalId)).unique();
-    if (!approval || approval.decision !== "pending" || approval.expiresAt < Date.now()) return { accepted: false };
+    if (!approval || approval.expiresAt < Date.now()) return { accepted: false };
     if (approval.ownerWaIdHash !== args.senderWaIdHash) return { accepted: false };
-    await context.db.patch(approval._id, { decision: args.decision, decidedAt: Date.now(), providerMessageId: args.providerMessageId });
-    if (approval.type === "reel" && args.decision === "approved") {
-      const reel = (await context.db.query("reelPlans").collect()).find((entry) => entry.approvalId === approval.approvalId);
-      if (reel) {
-        const transition = transitionReelLifecycle(reel.status as ReelLifecycleStatus, "approve");
-        if (transition.applied) await context.db.patch(reel._id, { status: transition.status });
-      }
+    const release = approval.type === "release"
+      ? (await context.db.query("growthReleaseRequests").collect()).find((entry) => entry.approvalId === approval.approvalId)
+      : undefined;
+    const reel = approval.type === "reel"
+      ? (await context.db.query("reelPlans").collect()).find((entry) => entry.approvalId === approval.approvalId)
+      : undefined;
+    const result = {
+      accepted: true as const,
+      type: approval.type,
+      decision: args.decision,
+      approvalId: approval.approvalId,
+      merchantId: approval.merchantId,
+      scopeHash: approval.scopeHash,
+      ...(release ? { release: { requestId: release.requestId, siteId: release.siteId, versionId: release.versionId, specHash: release.specHash } } : {}),
+      ...(reel ? { reel: { reelId: reel.reelId, planHash: reel.planHash } } : {}),
+    };
+    if (approval.decision !== "pending") {
+      return approval.decision === args.decision ? { ...result, replay: true as const } : { accepted: false as const };
     }
-    return { accepted: true };
+    await context.db.patch(approval._id, { decision: args.decision, decidedAt: Date.now(), providerMessageId: args.providerMessageId });
+    if (reel && args.decision === "approved") {
+      const transition = transitionReelLifecycle(reel.status as ReelLifecycleStatus, "approve");
+      if (transition.applied) await context.db.patch(reel._id, { status: transition.status });
+    }
+    return result;
   },
 });
 
@@ -1022,7 +1038,7 @@ export const adminCreateCallBatch = action({
 });
 
 export const registerReelInternal = internalMutation({
-  args: { reelId: v.string(), merchantId: v.string(), planJson: v.string(), planHash: v.string(), approvalId: v.string(), status: v.literal("draft"), createdAt: v.number() },
+  args: { reelId: v.string(), merchantId: v.string(), planJson: v.string(), planHash: v.string(), approvalId: v.string(), deliveryRecipientCiphertext: v.optional(v.string()), status: v.literal("draft"), createdAt: v.number() },
   handler: async (context, args) => {
     const existing = await context.db.query("reelPlans").withIndex("by_reel_id", (range) => range.eq("reelId", args.reelId)).unique();
     if (existing) throw new Error("reel ID already exists");
@@ -1032,7 +1048,7 @@ export const registerReelInternal = internalMutation({
 });
 
 export const adminRegisterReel = action({
-  args: { serviceSecret: v.string(), reelId: v.string(), merchantId: v.string(), planJson: v.string(), planHash: v.string(), approvalId: v.string(), status: v.literal("draft"), createdAt: v.number() },
+  args: { serviceSecret: v.string(), reelId: v.string(), merchantId: v.string(), planJson: v.string(), planHash: v.string(), approvalId: v.string(), deliveryRecipientCiphertext: v.optional(v.string()), status: v.literal("draft"), createdAt: v.number() },
   handler: async (context, args): Promise<{ inserted: boolean }> => {
     requireServiceSecret(args.serviceSecret);
     const { serviceSecret: _secret, ...record } = args;
@@ -1156,11 +1172,12 @@ export const adminCreateGrowthReleaseRequest = action({
 });
 
 export const promoteApprovedGrowthReleaseInternal = internalMutation({
-  args: { now: v.number() },
-  handler: async (context, { now }) => {
+  args: { now: v.number(), approvalId: v.optional(v.string()) },
+  handler: async (context, { now, approvalId }) => {
     const requests = await context.db.query("growthReleaseRequests").order("asc").collect();
     for (const request of requests) {
       if (request.status !== "pending") continue;
+      if (approvalId && request.approvalId !== approvalId) continue;
       const approval = await context.db.query("approvals").withIndex("by_approval_id", (range) => range.eq("approvalId", request.approvalId)).unique();
       if (!approval || approval.type !== "release" || approval.decision !== "approved" || approval.expiresAt < now || approval.scopeHash !== request.scopeHash || approval.merchantId !== request.merchantId) continue;
       const site = await context.db.query("sites").withIndex("by_slug", (range) => range.eq("slug", request.siteId)).unique();
@@ -1178,10 +1195,10 @@ export const promoteApprovedGrowthReleaseInternal = internalMutation({
 });
 
 export const adminPromoteApprovedGrowthRelease = action({
-  args: { serviceSecret: v.string(), now: v.number() },
+  args: { serviceSecret: v.string(), now: v.number(), approvalId: v.optional(v.string()) },
   handler: async (context, args): Promise<{ promoted: boolean; siteId?: string; versionId?: string }> => {
     requireServiceSecret(args.serviceSecret);
-    return context.runMutation(internal.growth.promoteApprovedGrowthReleaseInternal, { now: args.now });
+    return context.runMutation(internal.growth.promoteApprovedGrowthReleaseInternal, { now: args.now, approvalId: args.approvalId });
   },
 });
 
@@ -1392,6 +1409,21 @@ export const adminGetReelStatus = query({
     const reel = await context.db.query("reelPlans").withIndex("by_reel_id", (range) => range.eq("reelId", args.reelId)).unique();
     if (!reel || reel.merchantId !== args.merchantId) return null;
     return { status: reel.status, renderedAssetId: reel.renderedAssetId, providerMessageId: reel.deliveredProviderMessageId };
+  },
+});
+
+export const adminGetReelDeliveryTarget = query({
+  args: { serviceSecret: v.string(), reelId: v.string() },
+  handler: async (context, args) => {
+    requireServiceSecret(args.serviceSecret);
+    const reel = await context.db.query("reelPlans").withIndex("by_reel_id", (range) => range.eq("reelId", args.reelId)).unique();
+    if (!reel?.deliveryRecipientCiphertext) return null;
+    const plan = JSON.parse(reel.planJson) as { caption?: unknown };
+    return {
+      merchantId: reel.merchantId,
+      recipientCiphertext: reel.deliveryRecipientCiphertext,
+      caption: typeof plan.caption === "string" ? plan.caption : "Your approved Axcas reel",
+    };
   },
 });
 

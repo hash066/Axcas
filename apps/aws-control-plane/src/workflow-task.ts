@@ -60,9 +60,9 @@ async function productionMain(): Promise<void> {
   const ledgerTable = process.env.AXCAS_LEDGER_TABLE;
   if (!raw || !stateTable || !ledgerTable) throw new Error("AWS workflow task configuration is incomplete");
   const client = DynamoDBDocumentClient.from(new DynamoDBClient({}), { marshallOptions: { removeUndefinedValues: true } });
-  const [{ ProofGateBoundary }, { runStrandsToolWorkflow }] = await Promise.all([
+  const [{ ProofGateBoundary }, { runDeterministicStrandsWorkflow }] = await Promise.all([
     import("../../strands-orchestrator/src/boundary"),
-    import("../../strands-orchestrator/src/strands-workflow"),
+    import("../../strands-orchestrator/src/deterministic-workflow"),
   ]);
   const putState = async (record: Record<string, unknown>) => {
     await client.send(new PutCommand({ TableName: stateTable, Item: record }));
@@ -76,7 +76,7 @@ async function productionMain(): Promise<void> {
   };
   const envelope = parseWorkflowTaskEnvelope(raw);
   const outcome = await runWorkflowTask(envelope, {
-    execute: (input) => runStrandsToolWorkflow(input, new ProofGateBoundary()),
+    execute: (input) => runDeterministicStrandsWorkflow(input, new ProofGateBoundary()),
     putState,
     appendEvidence,
   });

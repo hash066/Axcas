@@ -20,7 +20,8 @@ describe("merchant language guard", () => {
     expect(findMerchantLanguageViolations("Ready to publish — maya-studio-3f9a2b website")).toEqual(["generated_slug"]);
     expect(findMerchantLanguageViolations("India/US policy checked")).toEqual(["policy_status"]);
     expect(findMerchantLanguageViolations("candidate created; verification requested")).toEqual(["pipeline_vocabulary"]);
-    expect(findMerchantLanguageViolations("Open https://axcas.example/preview/pgp_eyJzaXRlSWQi")).toEqual(["preview_token"]);
+    expect(findMerchantLanguageViolations("Open https://axcas.example/preview/pgp_eyJzaXRlSWQi")).toEqual([]);
+    expect(findMerchantLanguageViolations("Your website is live: https://proofgate-whatsapp-growth.example.workers.dev/s/maya-studio-3f9a2b")).toEqual([]);
   });
 
   it("blocks AWS, Meta and backend diagnostics at the final send boundary", () => {

@@ -283,10 +283,52 @@ class MerchantOutputGuardTests(unittest.TestCase):
             ),
         )
 
-        self.assertEqual(
-            self.plugin._route_gateway_control_message(event=event),
-            {"action": "respond", "text": self.plugin.NO_PENDING_RETRY_MESSAGE},
-        )
+        with mock.patch.object(self.plugin, "_call_bridge", return_value=json.dumps({
+            "status": "accepted",
+            "customerMessage": self.plugin.NO_PENDING_RETRY_MESSAGE,
+            "notifyCustomer": True,
+        })) as call_bridge:
+            self.assertEqual(
+                self.plugin._route_gateway_control_message(event=event),
+                {"action": "respond", "text": self.plugin.NO_PENDING_RETRY_MESSAGE},
+            )
+        call_bridge.assert_called_once_with("retry", {}, {
+            "platform": "whatsapp_cloud",
+            "userId": "919876543210",
+            "messageId": "wamid.retry-empty",
+        })
+
+    def test_captionless_photo_continues_the_durable_merchant_draft(self):
+        with tempfile.TemporaryDirectory() as directory:
+            image_path = pathlib.Path(directory) / "merchant-cake.jpg"
+            image_path.write_bytes(b"\xff\xd8\xff\xdbmerchant-photo")
+            event = types.SimpleNamespace(
+                text="",
+                message_id="wamid.photo-followup",
+                media_urls=[str(image_path)],
+                media_types=["image/jpeg"],
+                source=types.SimpleNamespace(
+                    platform="whatsapp_cloud",
+                    user_id="919876543210",
+                    message_id="wamid.photo-followup",
+                ),
+            )
+            with mock.patch.object(self.plugin, "_call_bridge", side_effect=[
+                json.dumps({"status": "accepted", "customerMessage": "", "notifyCustomer": False, "assetIds": ["merchant-bound-cake-photo"]}),
+                json.dumps({"status": "approval_sent", "customerMessage": "Your checked preview is ready: https://example.workers.dev/preview/one", "notifyCustomer": True}),
+            ]) as call_bridge:
+                routed = self.plugin._route_gateway_control_message(event=event)
+
+        self.assertEqual(routed["action"], "respond")
+        self.assertIn("preview", routed["text"])
+        call_bridge.assert_any_call("orchestrate_build", {
+            "transcript": "Merchant added a real business photo.",
+            "assetIds": ["merchant-bound-cake-photo"],
+        }, {
+            "platform": "whatsapp_cloud",
+            "userId": "919876543210",
+            "messageId": "wamid.photo-followup",
+        })
 
     def test_gateway_ingests_real_whatsapp_image_and_starts_bound_build_without_model(self):
         with tempfile.TemporaryDirectory() as directory:

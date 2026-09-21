@@ -36,6 +36,12 @@ export async function runReelGuardianOnce(options: ReelGuardianOptions): Promise
     if (!uploaded.assetId) throw new Error("render upload returned no asset ID");
     const completed = await fetcher(`${origin.origin}/internal/reel-result`, { method: "POST", headers: { ...auth, "content-type": "application/json" }, body: JSON.stringify({ reelId: plan.reelId, status: "rendered", renderedAssetId: uploaded.assetId, evidence }) });
     if (!completed.ok) throw new Error(`reel completion failed with HTTP ${completed.status}`);
+    const delivered = await fetcher(`${origin.origin}/internal/reel-delivery`, {
+      method: "POST",
+      headers: { ...auth, "content-type": "application/json" },
+      body: JSON.stringify({ reelId: plan.reelId, renderedAssetId: uploaded.assetId, caption: plan.caption }),
+    });
+    if (!delivered.ok) throw new Error(`reel delivery failed with HTTP ${delivered.status}`);
     return { claimed: true, reelId: plan.reelId, renderedAssetId: uploaded.assetId };
   } catch (error) {
     await fetcher(`${origin.origin}/internal/reel-result`, { method: "POST", headers: { ...auth, "content-type": "application/json" }, body: JSON.stringify({ reelId: plan.reelId, status: "delivery_failed", failureCode: "render_pipeline_failed" }) }).catch(() => undefined);

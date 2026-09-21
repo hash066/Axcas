@@ -54,6 +54,7 @@ _ACTIONS = frozenset({
     "call_batch",
     "reel",
     "orchestrate_build",
+    "retry",
 })
 
 _MAX_IMAGE_BYTES = 16 * 1024 * 1024
@@ -375,7 +376,7 @@ def _route_gateway_control_message(event: Any = None, **_kwargs: Any) -> dict[st
             return {"action": "respond", "text": SAFE_RETRY_MESSAGE}
         pending = _take_retry(context)
         if pending is None:
-            return {"action": "respond", "text": NO_PENDING_RETRY_MESSAGE}
+            return _direct_build_response(_call_bridge("retry", {}, context))
         action, payload = pending
         result = json.loads(_call_bridge(action, payload, context))
         customer_message = result.get("customerMessage")
@@ -396,8 +397,13 @@ def _route_gateway_control_message(event: Any = None, **_kwargs: Any) -> dict[st
             "intent": intent,
         }, context))
     if asset_ids:
-        asset_note = f"[Axcas verified merchant asset IDs: {', '.join(asset_ids)}]"
-        return {"action": "rewrite", "text": f"{asset_note}\n{original}".strip()}
+        # Photos belong to the same durable merchant draft as the preceding
+        # voice/text turn. Dispatching them directly prevents the model from
+        # starting a second project or forgetting the already supplied facts.
+        return _direct_build_response(_call_bridge("orchestrate_build", {
+            "transcript": original or "Merchant added a real business photo.",
+            "assetIds": asset_ids,
+        }, context))
     return None
 
 

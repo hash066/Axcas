@@ -40,6 +40,11 @@ Parameters:
     Default: https://proofgate-whatsapp-growth.proofgate-harshita.workers.dev
     AllowedPattern: '^https://[A-Za-z0-9.-]+(?:\.workers\.dev|\.execute-api\.[a-z0-9-]+\.amazonaws\.com)$'
     Description: Existing typed ProofGate command boundary retained until AWS parity acceptance; change only through a reviewed stack update.
+  SiteVerifierUrl:
+    Type: String
+    Default: https://axcas-site-verifier.proofgate-harshita.workers.dev
+    AllowedPattern: '^https://[A-Za-z0-9.-]+\.workers\.dev/?$'
+    Description: Credential-free verifier origin used only with public canary URLs and single-use evidence capabilities.
 
 Conditions:
   HasOperatorAlertEmail: !Not [!Equals [!Ref OperatorAlertEmail, '']]
@@ -108,6 +113,7 @@ Resources:
       PointInTimeRecoverySpecification: { PointInTimeRecoveryEnabled: true }
       SSESpecification: { SSEEnabled: true, SSEType: KMS, KMSMasterKeyId: !Ref DataKey }
       StreamSpecification: { StreamViewType: NEW_AND_OLD_IMAGES }
+      TimeToLiveSpecification: { AttributeName: expiresAt, Enabled: true }
 
   LedgerTable:
     Type: AWS::DynamoDB::Table
@@ -579,6 +585,7 @@ Resources:
             - { Name: AXCAS_BRIDGE_SOCKET, Value: '/run/axcas/tool-bridge.sock' }
             - { Name: PROOFGATE_ADMIN_URL, Value: !Ref MigrationAdminOriginUrl }
             - { Name: AXCAS_ADMIN_ORIGIN_ALLOWLIST, Value: !Ref MigrationAdminOriginUrl }
+            - { Name: AXCAS_SITE_VERIFIER_URL, Value: !Ref SiteVerifierUrl }
           Secrets:
             - { Name: PROOFGATE_SERVICE_SECRET, ValueFrom: !Sub '${ProviderSecrets}:PROOFGATE_SERVICE_SECRET::' }
           MountPoints: [{ SourceVolume: axcas-runtime, ContainerPath: /run/axcas, ReadOnly: false }]
@@ -608,6 +615,7 @@ Resources:
             - { Name: AXCAS_LEDGER_TABLE, Value: !Ref LedgerTable }
             - { Name: PROOFGATE_ADMIN_URL, Value: !Ref MigrationAdminOriginUrl }
             - { Name: AXCAS_ADMIN_ORIGIN_ALLOWLIST, Value: !Ref MigrationAdminOriginUrl }
+            - { Name: AXCAS_SITE_VERIFIER_URL, Value: !Ref SiteVerifierUrl }
           Secrets:
             - { Name: PROOFGATE_SERVICE_SECRET, ValueFrom: !Sub '${ProviderSecrets}:PROOFGATE_SERVICE_SECRET::' }
           LogConfiguration:
@@ -624,6 +632,44 @@ Resources:
       DesiredCount: 2
       LaunchType: FARGATE
       DeploymentConfiguration: { MinimumHealthyPercent: 50, MaximumPercent: 200, DeploymentCircuitBreaker: { Enable: true, Rollback: true } }
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups: [!Ref WorkerSecurityGroup]
+          Subnets: [!Ref PublicSubnetA, !Ref PublicSubnetB]
+
+  ReelWorkerTask:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub axcas-${EnvironmentName}-reel-worker
+      Cpu: '1024'
+      Memory: '2048'
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt WorkerTaskRole.Arn
+      ContainerDefinitions:
+        - Name: reel-worker
+          Image: !Ref WorkerImageUri
+          Essential: true
+          Command: [node, dist/apps/reel-guardian/src/server.js]
+          Environment:
+            - { Name: PROOFGATE_ADMIN_URL, Value: !Ref MigrationAdminOriginUrl }
+          Secrets:
+            - { Name: PROOFGATE_SERVICE_SECRET, ValueFrom: !Sub '${ProviderSecrets}:PROOFGATE_SERVICE_SECRET::' }
+          LogConfiguration:
+            LogDriver: awslogs
+            Options: { awslogs-group: !Ref WorkerLogGroup, awslogs-region: !Ref 'AWS::Region', awslogs-stream-prefix: reel-worker }
+
+  ReelWorkerService:
+    Type: AWS::ECS::Service
+    Condition: WorkersEnabled
+    Properties:
+      Cluster: !Ref Cluster
+      TaskDefinition: !Ref ReelWorkerTask
+      DesiredCount: 1
+      LaunchType: FARGATE
+      DeploymentConfiguration: { MinimumHealthyPercent: 0, MaximumPercent: 100, DeploymentCircuitBreaker: { Enable: true, Rollback: true } }
       NetworkConfiguration:
         AwsvpcConfiguration:
           AssignPublicIp: ENABLED

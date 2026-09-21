@@ -49,6 +49,21 @@ export const IntakeToolInputSchema = IntakeAssessmentSchema.extend({
 }).strict();
 export type IntakeToolInput = z.infer<typeof IntakeToolInputSchema>;
 
+/**
+ * The model may improve presentation copy, but it never owns merchant identity,
+ * prices, assets, release identifiers, or any other authoritative SiteSpec field.
+ */
+export const CandidateCopySchema = z.object({
+  businessDescription: safeText.optional(),
+  heroHeadline: safeText.optional(),
+  heroSubheadline: safeText.optional(),
+  ctaLabel: safeText.optional(),
+  seoTitle: safeText.optional(),
+  seoDescription: safeText.optional(),
+  offeringDescriptions: z.array(safeText).max(24).default([]),
+}).strict();
+export type CandidateCopyV1 = z.infer<typeof CandidateCopySchema>;
+
 export const MerchantWorkflowInputSchema = z.object({
   schemaVersion: z.literal(1),
   workflowId: identifier,

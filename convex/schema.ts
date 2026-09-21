@@ -410,6 +410,7 @@ export default defineSchema({
     renderEvidenceJson: v.optional(v.string()),
     renderEvidenceHash: v.optional(v.string()),
     deliveredProviderMessageId: v.optional(v.string()),
+    deliveryRecipientCiphertext: v.optional(v.string()),
     deliveryRecipientHash: v.optional(v.string()),
     deliveryFailureCode: v.optional(v.string()),
     deliveryStartedAt: v.optional(v.number()),

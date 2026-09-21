@@ -50,6 +50,7 @@ function adminBoundary(): GrowthAdminBoundary {
     beginReelDelivery: vi.fn(async () => ({ claimed: true, status: "delivering" })),
     finishReelDelivery: vi.fn(async () => ({ completed: true, status: "delivered" })),
     getReelStatus: vi.fn(async () => null),
+    getReelDeliveryTarget: vi.fn(async () => null),
     mintVerification: vi.fn(async () => ({ created: true })),
     createReleaseRequest: vi.fn(async () => ({ verificationRunId: "verify-1" })),
     promoteRelease: vi.fn(async () => ({ promoted: false })),
@@ -481,7 +482,7 @@ describe("growth Worker", () => {
     expect(admin.resolveStudioApproval).toHaveBeenCalledWith(expect.objectContaining({
       approvalId: "approval-12345678", merchantId: "merchant-1234567890abcdef", ownerWaIdHash: "a".repeat(64), decision: "approved",
     }), undefined);
-    expect(admin.promoteRelease).toHaveBeenCalledOnce();
+    expect(admin.promoteRelease).toHaveBeenCalledWith({ approvalId: "approval-12345678" }, undefined);
   });
 
   it("creates one Studio reel approval from the selected human-led format and supplied photos", async () => {
@@ -498,7 +499,7 @@ describe("growth Worker", () => {
     const result = await response.json() as any;
     expect(result).toMatchObject({ stage: "approval_required", reelId: expect.stringMatching(/^reel-/), recommendations: { status: "insufficient_signal", signals: [] } });
     expect(result.approval.checklist).toContain("not posted");
-    expect(admin.registerReel).toHaveBeenCalledWith(expect.objectContaining({ status: "draft", scenes: expect.any(Array) }), expect.stringMatching(/^[a-f0-9]{64}$/), expect.stringMatching(/^approval-/), undefined);
+    expect(admin.registerReel).toHaveBeenCalledWith(expect.objectContaining({ status: "draft", scenes: expect.any(Array) }), expect.stringMatching(/^[a-f0-9]{64}$/), expect.stringMatching(/^approval-/), undefined, undefined);
     expect(admin.createApproval).toHaveBeenCalledWith(expect.objectContaining({ type: "reel" }), undefined);
   });
 
@@ -711,6 +712,16 @@ describe("growth Worker", () => {
     const approvalBody = JSON.stringify({ entry: [{ changes: [{ value: { messages: [{ from: "919876543210", id: "wamid.tap", type: "interactive", interactive: { button_reply: { id: "pg:approval-1:approve" } } }] } }] }] });
     const growth = boundary();
     const admin = adminBoundary();
+    (growth.resolveApproval as ReturnType<typeof vi.fn>).mockResolvedValue({
+      accepted: true,
+      type: "release",
+      decision: "approved",
+      approvalId: "approval-1",
+      merchantId: "merchant-demo",
+      scopeHash: "b".repeat(64),
+      release: { requestId: "request-1", siteId: "mayas-oven", versionId: "bakery-v1", specHash: "a".repeat(64) },
+    });
+    (admin.promoteRelease as ReturnType<typeof vi.fn>).mockResolvedValue({ promoted: true, siteId: "mayas-oven", versionId: "bakery-v1" });
     const app = createApp(undefined, growth, admin);
     const approved = await app.request("http://proofgate.test/whatsapp/webhook", {
       method: "POST",
@@ -718,7 +729,9 @@ describe("growth Worker", () => {
       body: approvalBody,
     }, { META_APP_SECRET: secret, META_VERIFY_TOKEN: "verify" });
     expect(approved.status).toBe(200);
+    expect(await approved.json()).toMatchObject({ accepted: true, stage: "published", siteUrl: "http://proofgate.test/s/mayas-oven" });
     expect(growth.resolveApproval).toHaveBeenCalledOnce();
+    expect(admin.promoteRelease).toHaveBeenCalledWith({ approvalId: "approval-1" }, expect.anything());
     expect(growth.forwardToHermes).not.toHaveBeenCalled();
 
     const ordinaryBody = JSON.stringify({ entry: [{ changes: [{ value: { messages: [{ from: "919876543210", id: "wamid.text", type: "text", text: { body: "Build my site" } }] } }] }] });
@@ -742,6 +755,58 @@ describe("growth Worker", () => {
     expect(duplicate.status).toBe(200);
     expect(await duplicate.json()).toMatchObject({ accepted: true, duplicate: true, workflowIds: [expect.stringMatching(/^workflow-/)] });
     expect(growth.forwardToHermes).toHaveBeenCalledOnce();
+  });
+
+  it("publishes the exact approved Both site and immediately sends one private reel approval", async () => {
+    const secret = "meta-secret";
+    const sender = "919876543210";
+    const approvalBody = JSON.stringify({ entry: [{ changes: [{ value: { messages: [{ from: sender, id: "wamid.both-tap", type: "interactive", interactive: { button_reply: { id: "pg:approval-both:approve" } } }] } }] }] });
+    const growth = boundary();
+    const admin = adminBoundary();
+    (growth.resolveApproval as ReturnType<typeof vi.fn>).mockResolvedValue({
+      accepted: true, type: "release", decision: "approved", approvalId: "approval-both",
+      merchantId: "merchant-demo", scopeHash: "b".repeat(64),
+      release: { requestId: "request-both", siteId: "golden-crust", versionId: "golden-v1", specHash: "a".repeat(64) },
+    });
+    (admin.promoteRelease as ReturnType<typeof vi.fn>).mockResolvedValue({ promoted: true, siteId: "golden-crust", versionId: "golden-v1" });
+    (admin.listStudioProjects as ReturnType<typeof vi.fn>).mockResolvedValue([{
+      projectId: "project-golden", revisionId: "revision-golden", intent: "both", source: "whatsapp", createdAt: Date.now(),
+      project: {
+        projectId: "project-golden", intent: "both", businessName: "Golden Crust", description: "Home bakery in Hubli",
+        siteStyle: "catalog",
+        referenceAssetIds: ["asset-cake-1"], siteAssetIds: ["asset-cake-1"], suppliedClaims: [],
+        reelTemplate: "split_explainer", layerOverrides: { hook: "Fresh from the oven", proof: "Made in Hubli", cta: "Message to order", accent: "#9a4f35", pacing: "balanced" },
+      },
+    }]);
+    let messageNumber = 0;
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ messages: [{ id: `wamid.out-${++messageNumber}` }] }), { status: 200 })));
+    try {
+      const response = await createApp(undefined, growth, admin).request("https://proofgate.test/whatsapp/webhook", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-hub-signature-256": await metaSignatureForTest(approvalBody, secret) },
+        body: approvalBody,
+      }, {
+        META_APP_SECRET: secret,
+        META_PHONE_NUMBER_ID: "123456789",
+        META_ACCESS_TOKEN: "meta-token",
+        PROOFGATE_DATA_KEY: Buffer.alloc(32, 7).toString("base64"),
+      } as never);
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ stage: "published", siteUrl: "https://proofgate.test/s/golden-crust" });
+      expect(admin.promoteRelease).toHaveBeenCalledWith({ approvalId: "approval-both" }, expect.anything());
+      expect(admin.registerReel).toHaveBeenCalledWith(
+        expect.objectContaining({ status: "draft", scenes: expect.any(Array) }),
+        expect.stringMatching(/^[a-f0-9]{64}$/),
+        expect.stringMatching(/^approval-/),
+        expect.stringMatching(/^aesgcm:v1:/),
+        expect.anything(),
+      );
+      expect(admin.createApproval).toHaveBeenCalledWith(expect.objectContaining({ type: "reel", checklist: expect.stringContaining("Ready to make your reel") }), expect.anything());
+      expect(messageNumber).toBe(2);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("records signed inbound WhatsApp usage but does not invoke Hermes after model quota denial", async () => {

@@ -5,11 +5,12 @@ import { prepareJsonCommand, submitCommand, type PreparedCommand } from "../../p
 import {
   MerchantWorkflowInputSchema,
   ProofGateBoundary,
-  runStrandsToolWorkflow,
+  runDeterministicStrandsWorkflow,
   type MerchantWorkflowInput,
 } from "../../strands-orchestrator/src";
 import { assertMerchantSafeText } from "../../../packages/whatsapp-io/src/merchant-language";
 import { StudioIntakeInputSchema } from "../../../packages/domain/src/studio";
+import { createWorkflowDraftStore, type WorkflowDraftStore } from "./draft-store";
 
 export const SAFE_RETRY_MESSAGE = "I couldn’t complete this step just now. Please reply RETRY; you won’t need to retype your business details.";
 
@@ -32,6 +33,7 @@ const BridgeActionSchema = z.enum([
   "metrics",
   "orchestrate_build",
   "asset",
+  "retry",
 ]);
 
 const BridgeRequestSchema = z.object({
@@ -106,13 +108,27 @@ function normalizeBuildInput(payload: unknown, context: BridgeRequest["context"]
   return MerchantWorkflowInputSchema.parse({
     ...value,
     schemaVersion: 1,
-    workflowId: value.workflowId ?? stableId("workflow-wa", `${context.platform}:${context.userId}:${context.messageId}`),
+    workflowId: value.workflowId ?? stableId("workflow-wa", `${context.platform}:${context.userId}`),
     projectId: value.projectId ?? stableId("project-wa", `${context.platform}:${context.userId}`),
     intent: value.intent ?? "website",
     context,
     assetIds: value.assetIds ?? [],
     now: value.now ?? Date.now(),
     improvementRequested: value.improvementRequested ?? false,
+  });
+}
+
+function mergeWorkflowInput(previous: MerchantWorkflowInput | undefined, incoming: MerchantWorkflowInput): MerchantWorkflowInput {
+  if (!previous) return incoming;
+  const transcript = Array.from(new Set([previous.transcript.trim(), incoming.transcript.trim()].filter(Boolean))).join("\n").slice(0, 10_000);
+  return MerchantWorkflowInputSchema.parse({
+    ...previous,
+    context: incoming.context,
+    transcript,
+    assetIds: Array.from(new Set([...previous.assetIds, ...incoming.assetIds])).slice(0, 24),
+    intent: previous.intent === "both" || incoming.intent === "both" ? "both" : "website",
+    now: incoming.now,
+    improvementRequested: previous.improvementRequested || incoming.improvementRequested,
   });
 }
 
@@ -219,7 +235,7 @@ function safeResult(action: BridgeRequest["action"], raw: unknown): BridgeResult
   if (action === "candidate" && typeof value.previewUrl === "string" && /^https:\/\//.test(value.previewUrl)) {
     return {
       status: "preview_ready",
-      customerMessage: "Your website preview is ready. Check the business details, prices, and WhatsApp button.",
+      customerMessage: `Your website preview is ready: ${value.previewUrl}\n\nCheck the business details, prices, and WhatsApp button.`,
       notifyCustomer: true,
       previewUrl: value.previewUrl,
       previewExpiresAt: typeof value.previewExpiresAt === "number" ? value.previewExpiresAt : undefined,
@@ -240,7 +256,22 @@ function safeResult(action: BridgeRequest["action"], raw: unknown): BridgeResult
     };
   }
   if (action === "metrics") {
-    return { status: "accepted", customerMessage: "Your activity summary is ready.", notifyCustomer: true };
+    const views = typeof value.qualifiedViews === "number" && Number.isFinite(value.qualifiedViews)
+      ? Math.max(0, Math.trunc(value.qualifiedViews))
+      : typeof value.views === "number" && Number.isFinite(value.views)
+        ? Math.max(0, Math.trunc(value.views))
+        : 0;
+    const clicks = typeof value.ctaClicks === "number" && Number.isFinite(value.ctaClicks)
+      ? Math.max(0, Math.trunc(value.ctaClicks))
+      : typeof value.clicks === "number" && Number.isFinite(value.clicks)
+        ? Math.max(0, Math.trunc(value.clicks))
+        : 0;
+    const clickRate = views > 0 ? `${((clicks / views) * 100).toFixed(1)}%` : "not enough views yet";
+    return {
+      status: "accepted",
+      customerMessage: `Your website has ${views} qualified view${views === 1 ? "" : "s"} and ${clicks} WhatsApp click${clicks === 1 ? "" : "s"}. Click rate: ${clickRate}.`,
+      notifyCustomer: true,
+    };
   }
   return {
     status: "accepted",
@@ -288,30 +319,51 @@ export async function executeBridgeRequest(
   input: unknown,
   submit: Submit = submitCommand,
   env: NodeJS.ProcessEnv = process.env,
-  runBuildWorkflow: RunBuildWorkflow = runStrandsToolWorkflow,
+  runBuildWorkflow: RunBuildWorkflow = runDeterministicStrandsWorkflow,
+  draftStore: WorkflowDraftStore | null = createWorkflowDraftStore(env),
 ): Promise<BridgeResult> {
   const correlationId = randomUUID();
   let action: BridgeRequest["action"] | "unknown" = "unknown";
   let stage: DiagnosticStage = "request_validation";
+  let retryInput: MerchantWorkflowInput | undefined;
   try {
     const request = parseBridgeRequest(input);
     action = request.action;
     stage = "configuration";
     validatedOrigin(env);
+    if (request.action === "retry") {
+      stage = "workflow_input";
+      const saved = await draftStore?.load(request.context);
+      if (!saved) return { status: "accepted", customerMessage: "There isn’t a paused step to retry. Send your business details, photos, prices, and say Website, Reels, or Both.", notifyCustomer: true };
+      retryInput = saved.input;
+      stage = "workflow_execution";
+      const result = await runBuildWorkflow(saved.input, new ProofGateBoundary(env, submit));
+      if (result.status === "awaiting_input") {
+        await draftStore?.save(saved.input, { askedQuestion: true, checkpoint: saved.input.assetIds.length ? "assets_saved" : "received", operationIds: saved.operationIds });
+        return { status: "accepted", customerMessage: saved.askedQuestion ? "I’ve kept your draft. Send the remaining business details or photos when you’re ready." : consolidatedMissingFactsMessage(result.missingFacts), notifyCustomer: true };
+      }
+      await draftStore?.clear(request.context);
+      if (result.status === "verification_failed") return { status: "accepted", customerMessage: "I found an issue while checking the preview. I’ll keep the current draft private until it passes.", notifyCustomer: true };
+      return { status: "approval_sent", customerMessage: `Your checked preview is ready: ${result.previewUrl}\n\nReview it, then use the single approval checklist I sent. Open Axcas Studio: ${new URL(env.PROOFGATE_ADMIN_URL!).origin}/studio`, previewUrl: result.previewUrl, specHash: result.specHash, notifyCustomer: true };
+    }
     if (request.action === "orchestrate_build") {
       stage = "workflow_input";
-      const workflowInput = normalizeBuildInput(request.payload, request.context);
+      const existing = await draftStore?.load(request.context);
+      const workflowInput = mergeWorkflowInput(existing?.input, normalizeBuildInput(request.payload, request.context));
+      retryInput = workflowInput;
       stage = "workflow_execution";
       const result = await runBuildWorkflow(workflowInput, new ProofGateBoundary(env, submit));
       if (result.status === "awaiting_input") {
-        return { status: "accepted", customerMessage: consolidatedMissingFactsMessage(result.missingFacts), notifyCustomer: true };
+        await draftStore?.save(workflowInput, { askedQuestion: true, checkpoint: workflowInput.assetIds.length ? "assets_saved" : "received", operationIds: existing?.operationIds ?? [workflowInput.workflowId] });
+        return { status: "accepted", customerMessage: existing?.askedQuestion ? "I’ve added that to your draft. Send the remaining details or photos when you’re ready." : consolidatedMissingFactsMessage(result.missingFacts), notifyCustomer: true };
       }
+      await draftStore?.clear(request.context);
       if (result.status === "verification_failed") {
         return { status: "accepted", customerMessage: "I found an issue while checking the preview. I’ll keep the current draft private until it passes.", notifyCustomer: true };
       }
       return {
         status: "approval_sent",
-        customerMessage: "Your checked preview is ready. Review it, then use the single approval checklist I sent.",
+        customerMessage: `Your checked preview is ready: ${result.previewUrl}\n\nReview it, then use the single approval checklist I sent. Open Axcas Studio: ${new URL(env.PROOFGATE_ADMIN_URL!).origin}/studio`,
         previewUrl: result.previewUrl,
         specHash: result.specHash,
         notifyCustomer: true,
@@ -320,6 +372,7 @@ export async function executeBridgeRequest(
     if (request.action === "intake" && !StudioIntakeInputSchema.safeParse(request.payload).success) {
       stage = "workflow_input";
       const workflowInput = normalizeLegacyIntakeBuildInput(request.payload, request.context);
+      retryInput = workflowInput;
       stage = "workflow_execution";
       const result = await runBuildWorkflow(workflowInput, new ProofGateBoundary(env, submit));
       if (result.status === "awaiting_input") {
@@ -330,7 +383,7 @@ export async function executeBridgeRequest(
       }
       return {
         status: "approval_sent",
-        customerMessage: "Your checked preview is ready. Review it, then use the single approval checklist I sent.",
+        customerMessage: `Your checked preview is ready: ${result.previewUrl}\n\nReview it, then use the single approval checklist I sent. Open Axcas Studio: ${new URL(env.PROOFGATE_ADMIN_URL!).origin}/studio`,
         previewUrl: result.previewUrl,
         specHash: result.specHash,
         notifyCustomer: true,
@@ -348,6 +401,7 @@ export async function executeBridgeRequest(
     const result = await submit(command, scopedEnv);
     return safeResult(request.action, result);
   } catch (error) {
+    if (retryInput) await draftStore?.save(retryInput).catch(() => undefined);
     process.stderr.write(`${JSON.stringify({
       service: "axcas-tool-bridge",
       correlationId,

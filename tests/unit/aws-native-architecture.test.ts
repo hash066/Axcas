@@ -77,6 +77,10 @@ describe("AWS-native production architecture", () => {
     expect(worker).toContain("--packages=external");
     expect(worker).toContain("npm prune --omit=dev --ignore-scripts");
     expect(worker).toContain("COPY --from=build /workspace/node_modules ./node_modules");
+    expect(worker).toContain("apps/reel-guardian/src/server.ts");
+    expect(template).toContain("ReelWorkerTask:");
+    expect(template).toContain("ReelWorkerService:");
+    expect(template).toContain("Name: reel-worker");
     const hermes = readFileSync(hermesDockerfile, "utf8");
     expect(hermes).toContain("HERMES_GIT_REF=88a58ff1355eabe468b4dcd4e152a596932632e6");
     expect(hermes).toContain('git -C /opt/hermes fetch --depth 1 origin "${HERMES_GIT_REF}"');
@@ -98,6 +102,8 @@ describe("AWS-native production architecture", () => {
     expect(template).toContain("PathPattern: 'r/*'");
     expect(template).toContain("Name: WHATSAPP_CLOUD_ACCESS_TOKEN");
     expect(template).not.toContain("AXCAS_PROVIDER_SECRET_JSON");
+    expect(template).toContain("SiteVerifierUrl:");
+    expect((template.match(/Name: AXCAS_SITE_VERIFIER_URL/g) ?? [])).toHaveLength(2);
   });
 
   it("keeps Hermes operator onboarding out of the public WhatsApp channel", () => {

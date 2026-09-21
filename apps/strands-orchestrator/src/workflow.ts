@@ -3,7 +3,7 @@ import { inferStudioBusinessType } from "../../../packages/domain/src/studio-bui
 import {
   ApprovalResultSchema,
   BoundaryResultSchema,
-  CandidateEnvelopeSchema,
+  CandidateCopySchema,
   CandidateResultSchema,
   ImprovementProposalSchema,
   IntakeAssessmentSchema,
@@ -13,6 +13,7 @@ import {
   PublishedImprovementInputSchema,
   VerificationResultSchema,
   type ImprovementProposal,
+  type CandidateCopyV1,
   type IntakeAssessment,
   type MerchantWorkflowInput,
   type MissingFact,
@@ -159,13 +160,94 @@ function intakePrompt(input: MerchantWorkflowInput): string {
   })}`;
 }
 
-function candidatePrompt(input: MerchantWorkflowInput, assessment: IntakeAssessment, merchantId: string): string {
-  return `Create one constrained SiteSpecV2 candidate from the validated intake below. Use only the listed immutable assets and supplied claims. Use locale en-IN. Do not output HTML or scripts. The authenticated merchantId must be preserved exactly.\n\n${JSON.stringify({
-    merchantId,
-    projectId: input.projectId,
-    immutableAssetIds: input.assetIds,
-    intake: assessment,
+function candidatePrompt(assessment: IntakeAssessment): string {
+  return `Write concise presentation copy for this small-business website. Return copy fields only. Do not return identifiers, phone numbers, prices, assets, claims, HTML, scripts, or deployment instructions.\n\n${JSON.stringify({
+    businessType: assessment.businessType,
+    businessName: assessment.businessName,
+    description: assessment.description,
+    fulfillmentArea: assessment.fulfillmentArea,
+    leadTime: assessment.leadTime,
+    offerings: assessment.catalog.map((item) => ({ name: item.name, description: item.description })),
   })}`;
+}
+
+function slugPart(value: string, fallback: string): string {
+  const normalized = value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return normalized || fallback;
+}
+
+const themes: Record<IntakeAssessment["businessType"], { accent: string; background: string; layout: NonNullable<SiteSpecV2["theme"]["layout"]> }> = {
+  home_bakery: { accent: "#9a4f35", background: "#fff8ef", layout: "catalog" },
+  tailor: { accent: "#7b4568", background: "#fff8fc", layout: "portfolio" },
+  tutor: { accent: "#2f5e9a", background: "#f5f8ff", layout: "services" },
+  salon: { accent: "#8a4968", background: "#fff7fa", layout: "services" },
+  home_service: { accent: "#32675a", background: "#f5fbf8", layout: "services" },
+  retailer: { accent: "#86511f", background: "#fffaf2", layout: "catalog" },
+  other: { accent: "#3f5f73", background: "#f7fafc", layout: "minimal" },
+};
+
+export function compileSiteSpec(
+  assessment: IntakeAssessment,
+  copyInput: unknown,
+  merchantId: string,
+  input: MerchantWorkflowInput,
+): SiteSpecV2 {
+  const complete = IntakeAssessmentSchema.parse(assessment);
+  if (!complete.businessName || !complete.description || !complete.orderWhatsAppNumber || !complete.fulfillmentArea || !complete.leadTime || !complete.catalog.length || !input.assetIds.length) {
+    throw new Error("a complete validated intake is required to compile a site");
+  }
+  const parsedCopy = CandidateCopySchema.safeParse(copyInput);
+  const copy: CandidateCopyV1 = parsedCopy.success ? parsedCopy.data : CandidateCopySchema.parse({});
+  const suffix = slugPart(merchantId.replace(/^merchant-/, ""), "merchant").slice(-10);
+  const siteId = `${slugPart(complete.businessName, "business").slice(0, 48)}-${suffix}`.slice(0, 64).replace(/-+$/g, "");
+  const heroAsset = input.assetIds[0]!;
+  const catalog = complete.catalog.map((item, index) => ({
+    id: `${slugPart(item.name, `offering-${index + 1}`).slice(0, 52)}-${index + 1}`.slice(0, 64),
+    name: item.name,
+    description: copy.offeringDescriptions[index] ?? item.description ?? `${item.name} from ${complete.businessName}.`,
+    ...(item.priceMinor === undefined ? {} : { priceMinor: item.priceMinor }),
+    currency: item.currency,
+    imageAssetId: item.imageAssetId,
+    available: true,
+    whatsappMessage: `Hello, I'd like to enquire about ${item.name} from ${complete.businessName}.`,
+  }));
+  const spec = SiteSpecV2Schema.parse({
+    schemaVersion: 2,
+    siteId,
+    businessType: complete.businessType,
+    business: {
+      merchantId,
+      name: complete.businessName,
+      description: copy.businessDescription ?? complete.description,
+      timezone: complete.timezone,
+      locale: "en-IN",
+      orderWhatsAppNumber: complete.orderWhatsAppNumber,
+    },
+    theme: themes[complete.businessType],
+    hero: {
+      headline: copy.heroHeadline ?? `${complete.businessName}, made for ${complete.fulfillmentArea}`,
+      subheadline: copy.heroSubheadline ?? `${complete.leadTime} lead time. Enquire directly on WhatsApp.`,
+      imageAssetId: heroAsset,
+    },
+    fulfillment: { area: complete.fulfillmentArea, leadTime: complete.leadTime },
+    catalog,
+    whatsappCta: {
+      label: copy.ctaLabel ?? "Enquire on WhatsApp",
+      defaultMessage: `Hello, I'd like to enquire with ${complete.businessName}.`,
+      stickyOnMobile: true,
+    },
+    policies: { ordering: "Availability and final details are confirmed directly on WhatsApp." },
+    seo: {
+      title: copy.seoTitle ?? `${complete.businessName} — ${complete.fulfillmentArea}`,
+      description: copy.seoDescription ?? complete.description,
+      socialImageAssetId: heroAsset,
+    },
+    suppliedClaims: complete.suppliedClaims,
+    proofBadge: { enabled: true, passportSlug: siteId },
+  });
+  assertCandidateScope(spec, complete, input, merchantId);
+  return spec;
 }
 
 function improvementPrompt(metrics: ReturnType<typeof MetricsSchema.parse>, spec: SiteSpecV2, eligible: boolean): string {
@@ -181,8 +263,13 @@ export function workflowVersionId(workflowId: string): string {
 
 export async function runMerchantWorkflow(inputValue: unknown, dependencies: WorkflowDependencies) {
   const input = MerchantWorkflowInputSchema.parse(inputValue);
-  const intakeResult = await dependencies.agent.invoke(intakePrompt(input), { structuredOutputSchema: IntakeToolInputSchema });
-  const assessment = resolveIntakeAssessment(intakeResult.structuredOutput, input.transcript, input.assetIds);
+  let intakeOutput: unknown = { timezone: "Asia/Kolkata", suppliedClaims: [], catalog: [], missingFacts: [] };
+  try {
+    intakeOutput = (await dependencies.agent.invoke(intakePrompt(input), { structuredOutputSchema: IntakeToolInputSchema })).structuredOutput;
+  } catch {
+    // Grounded transcript extraction can still produce a safe basic site.
+  }
+  const assessment = resolveIntakeAssessment(intakeOutput, input.transcript, input.assetIds);
   const missingFacts = actualMissingFacts(assessment, input.assetIds);
   if (missingFacts.length) {
     return { status: "awaiting_input" as const, missingFacts, customerMessages: [consolidatedQuestion(missingFacts)] };
@@ -207,14 +294,13 @@ export async function runMerchantWorkflow(inputValue: unknown, dependencies: Wor
   const merchantId = input.merchantId ?? intakeBoundaryResult.merchantId;
   if (!merchantId) throw new Error("intake did not return the authenticated merchant scope");
 
-  const candidateResult = await dependencies.agent.invoke(candidatePrompt(input, assessment, merchantId), { structuredOutputSchema: CandidateEnvelopeSchema });
-  const envelope = CandidateEnvelopeSchema.parse(
-    candidateResult.structuredOutput && typeof candidateResult.structuredOutput === "object" && "spec" in candidateResult.structuredOutput
-      ? candidateResult.structuredOutput
-      : { spec: candidateResult.structuredOutput },
-  );
-  const spec = SiteSpecV2Schema.parse(envelope.spec);
-  assertCandidateScope(spec, assessment, input, merchantId);
+  let candidateCopy: unknown = {};
+  try {
+    candidateCopy = (await dependencies.agent.invoke(candidatePrompt(assessment), { structuredOutputSchema: CandidateCopySchema })).structuredOutput;
+  } catch {
+    // The deterministic compiler owns safe fallback copy.
+  }
+  const spec = compileSiteSpec(assessment, candidateCopy, merchantId, input);
   const candidateVersionId = workflowVersionId(input.workflowId);
   const candidate = CandidateResultSchema.parse(await dependencies.boundary.execute("candidate", {
     versionId: candidateVersionId,

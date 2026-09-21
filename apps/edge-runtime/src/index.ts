@@ -78,10 +78,22 @@ export type GrowthEvent = {
   occurredAt: number;
 };
 
+export type ApprovalResolutionV2 = {
+  accepted: boolean;
+  replay?: boolean;
+  type?: "release" | "reel" | "call_batch" | "social_campaign";
+  decision?: "approved" | "denied";
+  approvalId?: string;
+  merchantId?: string;
+  scopeHash?: string;
+  release?: { requestId: string; siteId: string; versionId: string; specHash: string };
+  reel?: { reelId: string; planHash: string };
+};
+
 export type GrowthBoundary = {
   getPublishedSite: (slug: string, bindings?: Bindings) => Promise<{ spec: SiteSpecV2; versionId: string; specHash: string; passportState: "gray" | "amber" | "green" | "red" } | null>;
   appendEvent: (event: GrowthEvent, bindings?: Bindings) => Promise<void>;
-  resolveApproval: (tap: NonNullable<ReturnType<typeof extractProofGateApproval>>, bindings?: Bindings) => Promise<{ accepted: boolean }>;
+  resolveApproval: (tap: NonNullable<ReturnType<typeof extractProofGateApproval>>, bindings?: Bindings) => Promise<ApprovalResolutionV2>;
   ingestVapiReport: (payload: unknown, bindings?: Bindings) => Promise<{ accepted: boolean }>;
   forwardToHermes: (body: Uint8Array, headers: Headers, bindings?: Bindings) => Promise<Response>;
   getAsset: (assetId: string, bindings?: Bindings) => Promise<{ body: Uint8Array; contentType: string; etag: string } | null>;
@@ -98,7 +110,7 @@ export type GrowthAdminBoundary = {
   resolveStudioApproval: (input: { approvalId: string; merchantId: string; ownerWaIdHash: string; decision: "approved" | "denied"; providerMessageId: string }, bindings?: Bindings) => Promise<{ accepted: boolean; type?: "release" | "reel"; reelId?: string }>;
   attachApprovalMessage: (approvalId: string, providerMessageId: string, bindings?: Bindings) => Promise<unknown>;
   createCallBatch: (batch: CallBatch, approvalId: string, bindings?: Bindings) => Promise<unknown>;
-  registerReel: (plan: ReelPlanV1, planHash: string, approvalId: string, bindings?: Bindings) => Promise<unknown>;
+  registerReel: (plan: ReelPlanV1, planHash: string, approvalId: string, deliveryRecipientCiphertext?: string, bindings?: Bindings) => Promise<unknown>;
   registerSocialCampaign: (input: { campaign: SocialCampaign; approvalId: string }, bindings?: Bindings) => Promise<unknown>;
   registerAsset: (input: { assetId: string; merchantId: string; storageBackend: "r2" | "convex"; objectKey?: string; convexStorageId?: string; sha256: string; contentType: string; byteLength: number; sourceProviderMessageId: string }, bindings?: Bindings) => Promise<unknown>;
   uploadAsset: (input: { assetId: string; merchantId: string; sha256: string; contentType: string; byteLength: number; sourceProviderMessageId: string; body: Uint8Array }, bindings?: Bindings) => Promise<{ inserted: boolean; storageBackend: "convex" }>;
@@ -113,9 +125,10 @@ export type GrowthAdminBoundary = {
   beginReelDelivery: (input: { reelId: string; merchantId: string; renderedAssetId: string; recipientHash: string }, bindings?: Bindings) => Promise<{ claimed: boolean; status: string; providerMessageId?: string }>;
   finishReelDelivery: (input: { reelId: string; status: "delivered" | "delivery_failed"; providerMessageId?: string; failureCode?: string }, bindings?: Bindings) => Promise<{ completed: boolean; status: string }>;
   getReelStatus: (reelId: string, merchantId: string, bindings?: Bindings) => Promise<{ status: "draft" | "approved" | "rendering" | "rendered" | "delivering" | "delivered" | "delivery_failed"; renderedAssetId?: string; providerMessageId?: string } | null>;
+  getReelDeliveryTarget: (reelId: string, bindings?: Bindings) => Promise<{ merchantId: string; recipientCiphertext: string; caption: string } | null>;
   mintVerification: (input: { tokenHash: string; merchantId: string; siteId: string; versionId: string; specHash: string; expiresAt: number }, bindings?: Bindings) => Promise<unknown>;
   createReleaseRequest: (input: { requestId: string; siteId: string; merchantId: string; versionId: string; specHash: string; scopeHash: string; approvalId: string }, bindings?: Bindings) => Promise<unknown>;
-  promoteRelease: (bindings?: Bindings) => Promise<unknown>;
+  promoteRelease: (input?: { approvalId?: string }, bindings?: Bindings) => Promise<unknown>;
   saveDecisionPolicy: (input: { policy: DecisionPolicyV1; policyHash: string }, bindings?: Bindings) => Promise<unknown>;
   getDecisionPolicy: (merchantId: string, bindings?: Bindings) => Promise<DecisionPolicyV1 | null>;
   createStudioLink: (input: { linkId: string; codeHash: string; browserNonceHash: string; intent: StudioIntent; expiresAt: number }, bindings?: Bindings) => Promise<unknown>;
@@ -359,7 +372,7 @@ const liveAdminBoundary: GrowthAdminBoundary = {
   resolveStudioApproval: (input, bindings) => adminClient(bindings).action((api as any).growth.adminResolveStudioApproval, { serviceSecret: serviceSecret(bindings), ...input, now: Date.now() }),
   attachApprovalMessage: (approvalId, providerMessageId, bindings) => adminClient(bindings).action((api as any).growth.adminAttachApprovalMessage, { serviceSecret: serviceSecret(bindings), approvalId, providerMessageId }),
   createCallBatch: (batch, approvalId, bindings) => adminClient(bindings).action((api as any).growth.adminCreateCallBatch, { serviceSecret: serviceSecret(bindings), ...batch, approvalId, createdAt: Date.now() }),
-  registerReel: (plan, planHash, approvalId, bindings) => adminClient(bindings).action((api as any).growth.adminRegisterReel, { serviceSecret: serviceSecret(bindings), reelId: plan.reelId, merchantId: plan.merchantId, planJson: JSON.stringify(plan), planHash, approvalId, status: "draft", createdAt: Date.now() }),
+  registerReel: (plan, planHash, approvalId, deliveryRecipientCiphertext, bindings) => adminClient(bindings).action((api as any).growth.adminRegisterReel, { serviceSecret: serviceSecret(bindings), reelId: plan.reelId, merchantId: plan.merchantId, planJson: JSON.stringify(plan), planHash, approvalId, deliveryRecipientCiphertext, status: "draft", createdAt: Date.now() }),
   registerSocialCampaign: ({ campaign, approvalId }, bindings) => adminClient(bindings).action((api as any).growth.adminRegisterSocialCampaign, {
     serviceSecret: serviceSecret(bindings), campaignId: campaign.campaignId, merchantId: campaign.merchantId,
     campaignJson: JSON.stringify(campaign), scopeHash: campaign.scopeHash, approvalId, createdAt: Date.now(),
@@ -434,9 +447,10 @@ const liveAdminBoundary: GrowthAdminBoundary = {
   beginReelDelivery: (input, bindings) => adminClient(bindings).action((api as any).growth.adminBeginReelDelivery, { serviceSecret: serviceSecret(bindings), ...input, now: Date.now() }),
   finishReelDelivery: (input, bindings) => adminClient(bindings).action((api as any).growth.adminFinishReelDelivery, { serviceSecret: serviceSecret(bindings), ...input, now: Date.now() }),
   getReelStatus: (reelId, merchantId, bindings) => adminClient(bindings).query((api as any).growth.adminGetReelStatus, { serviceSecret: serviceSecret(bindings), reelId, merchantId }),
+  getReelDeliveryTarget: (reelId, bindings) => adminClient(bindings).query((api as any).growth.adminGetReelDeliveryTarget, { serviceSecret: serviceSecret(bindings), reelId }),
   mintVerification: (input, bindings) => adminClient(bindings).action((api as any).growth.adminMintVerificationCapability, { serviceSecret: serviceSecret(bindings), ...input, createdAt: Date.now() }),
   createReleaseRequest: (input, bindings) => adminClient(bindings).action((api as any).growth.adminCreateGrowthReleaseRequest, { serviceSecret: serviceSecret(bindings), ...input, createdAt: Date.now() }),
-  promoteRelease: (bindings) => adminClient(bindings).action((api as any).growth.adminPromoteApprovedGrowthRelease, { serviceSecret: serviceSecret(bindings), now: Date.now() }),
+  promoteRelease: (input, bindings) => adminClient(bindings).action((api as any).growth.adminPromoteApprovedGrowthRelease, { serviceSecret: serviceSecret(bindings), now: Date.now(), approvalId: input?.approvalId }),
   saveDecisionPolicy: ({ policy, policyHash }, bindings) => adminClient(bindings).action((api as any).growth.adminAppendDecisionPolicy, {
     serviceSecret: serviceSecret(bindings), policyId: policy.policyId, merchantId: policy.merchantId,
     ownerWaIdHash: policy.ownerWaIdHash, policyJson: JSON.stringify(policy), policyHash,
@@ -911,7 +925,7 @@ export function createApp(evidenceBoundary: EvidenceBoundary = liveEvidenceBound
     }, context.env);
     if (!usage.allowed) return context.json({ stage: "usage_limit", message: quotaExceededCustomerMessage(usage.blockingMetric ?? "render_seconds") }, 429, { "cache-control": "no-store" });
     const approvalId = `approval-${crypto.randomUUID()}`;
-    await adminBoundary.registerReel(built.plan, planHash, approvalId, context.env);
+    await adminBoundary.registerReel(built.plan, planHash, approvalId, undefined, context.env);
     const reelChecklist = formatApprovalChecklist({
       type: "reel", subject: reelAngleLabel(built.plan.angle),
       details: ["Uses only your selected photos", "15 seconds, full-screen vertical", "Your own hook, proof, and call to action", "Sent back to you privately — never posted"],
@@ -945,7 +959,7 @@ export function createApp(evidenceBoundary: EvidenceBoundary = liveEvidenceBound
     if (!resolved.accepted) return context.text("Approval is invalid, expired, or already used", 409);
     if (decision === "denied") return context.json({ stage: "declined" }, 200, { "cache-control": "no-store" });
     if (resolved.type === "reel" && resolved.reelId) return context.json({ stage: "rendering", reelId: resolved.reelId }, 202, { "cache-control": "no-store" });
-    const promoted = await adminBoundary.promoteRelease(context.env) as { promoted?: boolean; siteId?: string; versionId?: string };
+    const promoted = await adminBoundary.promoteRelease({ approvalId }, context.env) as { promoted?: boolean; siteId?: string; versionId?: string };
     if (!promoted.promoted || !promoted.siteId) return context.json({ stage: "publication_pending" }, 202, { "cache-control": "no-store" });
     return context.json({ stage: "published", siteId: promoted.siteId, versionId: promoted.versionId, siteUrl: `${new URL(context.req.url).origin}/s/${promoted.siteId}` }, 200, { "cache-control": "no-store" });
   });
@@ -1106,7 +1120,77 @@ export function createApp(evidenceBoundary: EvidenceBoundary = liveEvidenceBound
     const approval = extractProofGateApproval(payload);
     if (approval) {
       const result = await growthBoundary.resolveApproval(approval, context.env);
-      return context.json(result, result.accepted ? 200 : 409);
+      if (!result.accepted) return context.json(result, 409);
+      if (result.decision === "approved" && result.type === "release" && result.release && result.approvalId && !result.replay) {
+        const promoted = await adminBoundary.promoteRelease({ approvalId: result.approvalId }, context.env) as { promoted?: boolean; siteId?: string; versionId?: string };
+        if (!promoted.promoted || promoted.siteId !== result.release.siteId || promoted.versionId !== result.release.versionId) {
+          return context.json({ ...result, stage: "publication_pending" }, 200);
+        }
+        if (context.env?.META_PHONE_NUMBER_ID && context.env.META_ACCESS_TOKEN && result.merchantId) {
+          const operationId = `wa-out:published:${result.approvalId}`;
+          if ((await reserveOutboundMessage(result.merchantId, operationId, context.env)).allowed) {
+            const origin = new URL(context.req.url).origin;
+            const receipt = await sendTextMessage({
+              graphApiVersion: context.env.META_GRAPH_API_VERSION ?? "v20.0",
+              phoneNumberId: context.env.META_PHONE_NUMBER_ID,
+              accessToken: context.env.META_ACCESS_TOKEN,
+              recipientWaId: approval.senderWaId,
+              body: `Your website is live: ${origin}/s/${result.release.siteId}\n\nOpen Axcas Studio: ${origin}/studio`,
+            });
+            await recordOutboundMessage(result.merchantId, operationId, receipt.providerMessageId, context.env);
+            const bothProject = (await adminBoundary.listStudioProjects(result.merchantId, context.env)).find((entry) => entry.intent === "both");
+            if (bothProject && context.env.PROOFGATE_DATA_KEY) {
+              try {
+                const identity = await deriveTenantIdentity(approval.senderWaId);
+                const built = buildStudioReelPlan(bothProject.project, identity);
+                const planHash = await sha256(canonicalize(built.plan));
+                const reelApprovalId = `approval-${crypto.randomUUID()}`;
+                const reelUsage = await adminBoundary.reserveUsage({
+                  merchantId: result.merchantId,
+                  operationId: `reel:${built.plan.reelId}`,
+                  idempotencyKey: `reserve:reel:${planHash}`,
+                  requestedAt: Date.now(),
+                  reservations: [
+                    { metric: "render_seconds", quantity: Math.ceil(built.plan.scenes.reduce((total, scene) => total + scene.durationMs, 0) / 1000) },
+                    { metric: "polly_characters", quantity: built.plan.voiceover.length },
+                  ],
+                }, context.env);
+                if (reelUsage.allowed) {
+                  await adminBoundary.registerReel(built.plan, planHash, reelApprovalId, await encryptSensitive(approval.senderWaId, context.env.PROOFGATE_DATA_KEY), context.env);
+                  const reelChecklist = formatApprovalChecklist({
+                    type: "reel",
+                    subject: reelAngleLabel(built.plan.angle),
+                    details: ["Recommended: show the offer clearly", "Alternative: show how it is made", "Alternative: answer a common customer question", "Uses only your real photos and is sent back privately"],
+                  });
+                  await adminBoundary.createApproval({ approvalId: reelApprovalId, merchantId: result.merchantId, type: "reel", scopeHash: planHash, expiresAt: Date.now() + 86_400_000, checklist: reelChecklist }, context.env);
+                  const reelReceipt = await sendApprovalButtons({
+                    graphApiVersion: context.env.META_GRAPH_API_VERSION ?? "v20.0",
+                    phoneNumberId: context.env.META_PHONE_NUMBER_ID,
+                    accessToken: context.env.META_ACCESS_TOKEN,
+                    recipientWaId: approval.senderWaId,
+                    approvalId: reelApprovalId,
+                    body: reelChecklist,
+                  });
+                  await adminBoundary.attachApprovalMessage(reelApprovalId, reelReceipt.providerMessageId, context.env);
+                  await recordOutboundMessage(result.merchantId, `wa-out:approval:${reelApprovalId}`, reelReceipt.providerMessageId, context.env);
+                }
+              } catch {
+                // The published site remains valid; reel preparation is independently retryable.
+                console.error(JSON.stringify({
+                  service: "axcas-edge-runtime",
+                  correlationId: result.approvalId,
+                  stage: "reel_preparation",
+                  failure: "reel_follow_on_unavailable",
+                  retryable: true,
+                }));
+              }
+            }
+            return context.json({ ...result, stage: "published", siteUrl: `${origin}/s/${result.release.siteId}`, providerMessageId: receipt.providerMessageId }, 200);
+          }
+        }
+        return context.json({ ...result, stage: "published", siteUrl: `${new URL(context.req.url).origin}/s/${result.release.siteId}` }, 200);
+      }
+      return context.json(result, 200);
     }
     const studioLink = extractStudioLinkMessage(payload);
     if (studioLink) {
@@ -1367,12 +1451,13 @@ export function createApp(evidenceBoundary: EvidenceBoundary = liveEvidenceBound
     }, context.env);
     if (!reelUsage.allowed) return context.json({ accepted: false, stage: "usage_limit", message: quotaExceededCustomerMessage(reelUsage.blockingMetric ?? "render_seconds") }, 429);
     const approvalId = `approval-${crypto.randomUUID()}`;
-    await adminBoundary.registerReel(plan, planHash, approvalId, context.env);
+    const recipientWaId = context.req.header("x-hermes-user-id")?.replace(/\D/g, "");
+    const recipientCiphertext = recipientWaId ? await encryptSensitive(recipientWaId, context.env?.PROOFGATE_DATA_KEY) : undefined;
+    await adminBoundary.registerReel(plan, planHash, approvalId, recipientCiphertext, context.env);
     const whatsappReelChecklist = formatApprovalChecklist({
       type: "reel", subject: reelAngleLabel(plan.angle), details: ["Uses only the photos you chose", "Says only what you told me", "Full-screen vertical, with text kept clear of the edges", "Sent back to you here — never posted for you"],
     });
     await adminBoundary.createApproval({ approvalId, merchantId: plan.merchantId, type: "reel", scopeHash: planHash, expiresAt: Date.now() + 86_400_000, checklist: whatsappReelChecklist }, context.env);
-    const recipientWaId = context.req.header("x-hermes-user-id")?.replace(/\D/g, "");
     if (!recipientWaId || !context.env?.META_PHONE_NUMBER_ID || !context.env?.META_ACCESS_TOKEN) return context.json({ accepted: true, approvalId, planHash, delivery: "blocked_missing_meta_configuration" }, 202);
     const reelMessageOperation = `wa-out:approval:${approvalId}`;
     if (!(await reserveOutboundMessage(plan.merchantId, reelMessageOperation, context.env)).allowed) return context.json({ accepted: true, approvalId, planHash, delivery: "usage_limit", message: quotaExceededCustomerMessage("whatsapp_messages") }, 202);
@@ -1480,7 +1565,7 @@ export function createApp(evidenceBoundary: EvidenceBoundary = liveEvidenceBound
       const job = await adminBoundary.claimReel(context.env);
       return context.json({ claimed: Boolean(job), job });
     }
-    if (payload.kind === "release") return context.json(await adminBoundary.promoteRelease(context.env));
+    if (payload.kind === "release") return context.json(await adminBoundary.promoteRelease(undefined, context.env));
     if (payload.kind !== "calls") return context.text("kind must be calls, reel, or release", 400);
     if (context.env?.CALLING_LIVE_ENABLED !== "true") return context.json({ claimed: false, blocked: "calling_feature_not_live" }, 503);
     if (!context.env?.VAPI_API_KEY || !context.env.VAPI_PHONE_NUMBER_ID || !context.env.VAPI_SQUAD_ID || !context.env.PROOFGATE_DATA_KEY) {
@@ -1548,9 +1633,13 @@ export function createApp(evidenceBoundary: EvidenceBoundary = liveEvidenceBound
     if (!adminAuthorized(context.req.header("authorization"), context.env)) return context.text("Unauthorized", 401);
     const payload = await context.req.json() as { reelId?: string; renderedAssetId?: string; recipientWaId?: string; caption?: string };
     if (!payload.reelId || !/^[a-zA-Z0-9_-]{3,128}$/.test(payload.reelId) || !payload.renderedAssetId || !/^[a-zA-Z0-9_-]{3,128}$/.test(payload.renderedAssetId)) return context.text("Invalid reel delivery scope", 400);
-    if (!payload.recipientWaId || !/^\d{8,15}$/.test(payload.recipientWaId) || (payload.caption?.length ?? 0) > 1024) return context.text("Invalid reel recipient or caption", 400);
+    if ((payload.recipientWaId && !/^\d{8,15}$/.test(payload.recipientWaId)) || (payload.caption?.length ?? 0) > 1024) return context.text("Invalid reel recipient or caption", 400);
     if (!context.env?.META_PHONE_NUMBER_ID || !context.env.META_ACCESS_TOKEN) return context.text("Meta is not configured", 503);
-    const recipientTenant = await deriveTenantIdentity(payload.recipientWaId);
+    const storedTarget = payload.recipientWaId ? null : await adminBoundary.getReelDeliveryTarget(payload.reelId, context.env);
+    const recipientWaId = payload.recipientWaId ?? (storedTarget ? await decryptSensitive(storedTarget.recipientCiphertext, context.env?.PROOFGATE_DATA_KEY) : undefined);
+    if (!recipientWaId || !/^\d{8,15}$/.test(recipientWaId)) return context.text("Reel delivery target is unavailable", 409);
+    const recipientTenant = await deriveTenantIdentity(recipientWaId);
+    if (storedTarget && storedTarget.merchantId !== recipientTenant.merchantId) return context.text("Reel delivery tenant mismatch", 409);
     const deliveryOperation = `wa-out:reel:${payload.reelId}`;
     if (!(await reserveOutboundMessage(recipientTenant.merchantId, deliveryOperation, context.env)).allowed) return context.json({ delivered: false, stage: "usage_limit", message: quotaExceededCustomerMessage("whatsapp_messages") }, 429);
     const object = await adminBoundary.getPrivateAsset(payload.renderedAssetId, context.env);
@@ -1573,7 +1662,7 @@ export function createApp(evidenceBoundary: EvidenceBoundary = liveEvidenceBound
       });
       const receipt = await sendVideoByMediaId({
         graphApiVersion: context.env.META_GRAPH_API_VERSION ?? "v20.0", phoneNumberId: context.env.META_PHONE_NUMBER_ID,
-        accessToken: context.env.META_ACCESS_TOKEN, recipientWaId: payload.recipientWaId, mediaId: media.mediaId, caption: payload.caption,
+        accessToken: context.env.META_ACCESS_TOKEN, recipientWaId, mediaId: media.mediaId, caption: payload.caption ?? storedTarget?.caption,
       });
       await recordOutboundMessage(recipientTenant.merchantId, deliveryOperation, receipt.providerMessageId, context.env);
       await adminBoundary.finishReelDelivery({ reelId: payload.reelId, status: "delivered", providerMessageId: receipt.providerMessageId }, context.env);

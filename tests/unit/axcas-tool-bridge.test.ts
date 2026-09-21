@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { executeBridgeRequest, parseBridgeRequest, SAFE_RETRY_MESSAGE } from "../../apps/axcas-tool-bridge/src/bridge";
+import type { WorkflowDraftStore } from "../../apps/axcas-tool-bridge/src/draft-store";
 import { buildStudioWebsite } from "../../packages/domain/src/studio-builder";
 
 const context = {
@@ -27,6 +28,71 @@ const intake = {
 };
 
 describe("Axcas typed tool bridge", () => {
+  it("resumes a failed build from an external draft store after process-local state is gone", async () => {
+    let saved: any = null;
+    const store: WorkflowDraftStore = {
+      save: vi.fn(async (input, state = {}) => { saved = { schemaVersion: 1, input, askedQuestion: state.askedQuestion ?? false, checkpoint: state.checkpoint ?? "received", operationIds: state.operationIds ?? [input.workflowId], expiresAt: Math.floor(Date.now() / 1000) + 86400, updatedAt: Date.now() }; }),
+      load: vi.fn(async () => saved),
+      clear: vi.fn(async () => { saved = null; }),
+    };
+    const env = { PROOFGATE_ADMIN_URL: "https://example.workers.dev", PROOFGATE_SERVICE_SECRET: "server-only-secret-material-12345" };
+    const failed = await executeBridgeRequest(
+      { action: "orchestrate_build", context, payload: { transcript: "Golden Crust sells sourdough in Hubli.", assetIds: ["asset-bread-1"], intent: "website" } },
+      vi.fn(), env, async () => { throw new Error("temporary provider failure"); }, store,
+    );
+    expect(failed.status).toBe("temporarily_unavailable");
+    expect(store.save).toHaveBeenCalledOnce();
+
+    const resumed = await executeBridgeRequest(
+      { action: "retry", context: { ...context, messageId: "wamid.retry" }, payload: {} },
+      vi.fn(), env, async () => ({
+        status: "awaiting_approval" as const,
+        approvalId: "approval-demo",
+        previewUrl: "https://example.workers.dev/preview/signed-preview",
+        specHash: "a".repeat(64),
+        verificationRunId: "verify-demo",
+      }), store,
+    );
+
+    expect(resumed).toMatchObject({ status: "approval_sent", previewUrl: "https://example.workers.dev/preview/signed-preview" });
+    expect(resumed.customerMessage).toContain("https://example.workers.dev/preview/signed-preview");
+    expect(store.clear).toHaveBeenCalledOnce();
+  });
+
+  it("merges a later photo into one merchant-stable workflow without repeating the missing-facts question", async () => {
+    let saved: any = null;
+    const store: WorkflowDraftStore = {
+      save: vi.fn(async (input, state = {}) => { saved = { schemaVersion: 1, input, askedQuestion: state.askedQuestion ?? false, checkpoint: state.checkpoint ?? "received", operationIds: state.operationIds ?? [input.workflowId], expiresAt: Math.floor(Date.now() / 1000) + 86400, updatedAt: Date.now() }; }),
+      load: vi.fn(async () => saved),
+      clear: vi.fn(async () => { saved = null; }),
+    };
+    const env = { PROOFGATE_ADMIN_URL: "https://example.workers.dev", PROOFGATE_SERVICE_SECRET: "server-only-secret-material-12345" };
+    const runWorkflow = vi.fn(async (input: any) => input.assetIds.length === 0
+      ? { status: "awaiting_input" as const, missingFacts: ["photos"], customerMessages: [] }
+      : { status: "awaiting_approval" as const, approvalId: "approval-one", previewUrl: "https://example.workers.dev/preview/one", specHash: "a".repeat(64), verificationRunId: "verify-one" });
+
+    const first = await executeBridgeRequest(
+      { action: "orchestrate_build", context, payload: { transcript: "My business is Golden Crust, a bakery in Hubli. Both website and reels.", assetIds: [], intent: "both" } },
+      vi.fn(), env, runWorkflow, store,
+    );
+    const firstWorkflowId = saved.input.workflowId;
+    expect(first.customerMessage).toContain("real business photo");
+
+    const second = await executeBridgeRequest(
+      { action: "orchestrate_build", context: { ...context, messageId: "wamid.photo" }, payload: { transcript: "Merchant added a real business photo.", assetIds: ["asset-cake-one"] } },
+      vi.fn(), env, runWorkflow, store,
+    );
+
+    expect(runWorkflow).toHaveBeenLastCalledWith(expect.objectContaining({
+      workflowId: firstWorkflowId,
+      intent: "both",
+      assetIds: ["asset-cake-one"],
+      transcript: expect.stringContaining("Golden Crust"),
+    }), expect.anything());
+    expect(second).toMatchObject({ status: "approval_sent", previewUrl: "https://example.workers.dev/preview/one" });
+    expect(store.clear).toHaveBeenCalledOnce();
+  });
+
   it("accepts only the explicit merchant action vocabulary", () => {
     expect(() => parseBridgeRequest({ action: "guardian", context, payload: {} })).toThrow();
     expect(() => parseBridgeRequest({ action: "deliver_reel", context, payload: {} })).toThrow();
@@ -110,10 +176,27 @@ describe("Axcas typed tool bridge", () => {
     expect(result).toMatchObject({
       status: "preview_ready",
       notifyCustomer: true,
-      customerMessage: "Your website preview is ready. Check the business details, prices, and WhatsApp button.",
+      customerMessage: "Your website preview is ready: https://example.workers.dev/preview/signed-preview\n\nCheck the business details, prices, and WhatsApp button.",
       previewUrl: "https://example.workers.dev/preview/signed-preview",
     });
     expect(JSON.stringify(result)).not.toMatch(/providerDebug/);
+  });
+
+  it("reports real metric denominators instead of a placeholder summary", async () => {
+    const result = await executeBridgeRequest(
+      { action: "metrics", context, payload: { siteId: "golden-crust", days: 7 } },
+      async () => ({ qualifiedViews: 125, ctaClicks: 10, since: 1_000, until: 2_000 }),
+      {
+        PROOFGATE_ADMIN_URL: "https://example.workers.dev",
+        PROOFGATE_SERVICE_SECRET: "server-only-secret-material-12345",
+      },
+    );
+
+    expect(result).toEqual({
+      status: "accepted",
+      customerMessage: "Your website has 125 qualified views and 10 WhatsApp clicks. Click rate: 8.0%.",
+      notifyCustomer: true,
+    });
   });
 
   it("maps provider and credential errors to one customer-safe response", async () => {

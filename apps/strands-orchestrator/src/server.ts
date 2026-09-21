@@ -1,7 +1,8 @@
 import { createServer } from "node:http";
 
 import { ProofGateBoundary } from "./boundary";
-import { runStrandsImprovementWorkflow, runStrandsToolWorkflow } from "./strands-workflow";
+import { runDeterministicStrandsWorkflow } from "./deterministic-workflow";
+import { runStrandsImprovementWorkflow } from "./strands-workflow";
 
 const port = Number(process.env.PORT ?? 8080);
 const host = process.env.AXCAS_STRANDS_HOST ?? "127.0.0.1";
@@ -35,7 +36,7 @@ const server = createServer(async (request, response) => {
     const result = payload.mode === "improvement"
       ? await runStrandsImprovementWorkflow(payload.input, boundary)
       : payload.mode === "build"
-        ? await runStrandsToolWorkflow(payload.input, boundary)
+        ? await runDeterministicStrandsWorkflow(payload.input as never, boundary)
         : (() => { throw new Error("invalid_mode"); })();
     response.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
     response.end(JSON.stringify(result));
