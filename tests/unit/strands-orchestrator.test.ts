@@ -218,11 +218,11 @@ describe("Strands merchant workflow", () => {
     const result = await runMerchantWorkflow(input, {
       agent,
       boundary: api,
-      structuredOutputTimeoutMs: 5,
     });
 
     expect(result).toMatchObject({ status: "awaiting_approval", approvalId: "approval-demo" });
     expect(api.execute).toHaveBeenCalledWith("candidate", expect.anything(), context);
+    expect(agent.invoke).not.toHaveBeenCalled();
   });
 
   it("preserves explicit WhatsApp facts when model extraction returns blanks", () => {
@@ -252,7 +252,7 @@ describe("Strands merchant workflow", () => {
     expect(actualMissingFacts(grounded, ["merchant-cake-photo"])).toEqual([]);
   });
 
-  it("does not send a complete grounded merchant bundle through intake structured output", async () => {
+  it("keeps a complete grounded merchant bundle out of every model call", async () => {
     const completeInput = {
       ...input,
       transcript: "My business is Golden Crust Hubli, a home bakery in Hubli. I make hazelnut cakes, brownies, and sourdough. Customers should contact +91 98765 43210 on WhatsApp. I serve Hubli city and need 24 hours' notice. Hazelnut cake is ₹650, a brownie box is ₹350, and sourdough is ₹180. I want Both—a website and Reels.",
@@ -263,8 +263,7 @@ describe("Strands merchant workflow", () => {
     const result = await runMerchantWorkflow(completeInput, { agent, boundary: boundary() });
 
     expect(result.status).toBe("awaiting_approval");
-    expect(agent.invoke).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(agent.invoke).mock.calls[0]?.[0]).toContain("presentation copy");
+    expect(agent.invoke).not.toHaveBeenCalled();
   });
 
   it("asks one consolidated, customer-safe question when intake is incomplete", async () => {
@@ -313,7 +312,7 @@ describe("Strands merchant workflow", () => {
       approvalId: "approval-demo",
       previewUrl: "https://example.workers.dev/preview/pgp_demo.sig",
     });
-    expect(vi.mocked(agent.invoke)).toHaveBeenCalledTimes(1);
+    expect(agent.invoke).not.toHaveBeenCalled();
   });
 
   it("stops before approval and metrics when independent verification fails", async () => {

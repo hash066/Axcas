@@ -1,6 +1,5 @@
 import { SiteSpecV2Schema, type SiteSpecV2 } from "../../../packages/domain/src/growth";
 import { inferStudioBusinessType } from "../../../packages/domain/src/studio-builder";
-import type { ZodType } from "zod";
 import {
   ApprovalResultSchema,
   BoundaryResultSchema,
@@ -41,7 +40,6 @@ export type AxcasBoundary = {
 type WorkflowDependencies = {
   agent: StructuredAgent;
   boundary: AxcasBoundary;
-  structuredOutputTimeoutMs?: number;
 };
 
 const factLabels: Record<MissingFact, string> = {
@@ -55,32 +53,6 @@ const factLabels: Record<MissingFact, string> = {
 };
 
 const DEFAULT_STRUCTURED_OUTPUT_TIMEOUT_MS = 3_000;
-
-async function invokeStructuredWithin(
-  agent: StructuredAgent,
-  prompt: string,
-  schema: ZodType,
-  timeoutMs: number,
-): Promise<unknown> {
-  const controller = new AbortController();
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  const expired = new Promise<undefined>((resolve) => {
-    timeout = setTimeout(() => {
-      controller.abort();
-      resolve(undefined);
-    }, timeoutMs);
-  });
-  const invocation = agent.invoke(prompt, {
-    structuredOutputSchema: schema,
-    cancelSignal: controller.signal,
-    limits: { turns: 3, outputTokens: 2_000 },
-  }).then((result) => result.structuredOutput, () => undefined);
-  try {
-    return await Promise.race([invocation, expired]);
-  } finally {
-    if (timeout) clearTimeout(timeout);
-  }
-}
 
 export function actualMissingFacts(assessment: IntakeAssessment, suppliedAssets: readonly string[]): MissingFact[] {
   // Required fields are the authority. A model-provided missingFacts list is
@@ -185,25 +157,6 @@ export function assertCandidateScope(spec: SiteSpecV2, assessment: IntakeAssessm
   if (spec.suppliedClaims.some((claim) => !claims.has(claim))) throw new Error("candidate contains a claim that the merchant did not supply");
 }
 
-function intakePrompt(input: MerchantWorkflowInput): string {
-  return `Extract one complete merchant intake from this WhatsApp bundle. Infer the constrained business type. Do not invent missing facts. Return every missing fact in one list.\n\n${JSON.stringify({
-    intent: input.intent,
-    transcript: input.transcript,
-    immutableAssetIds: input.assetIds,
-  })}`;
-}
-
-function candidatePrompt(assessment: IntakeAssessment): string {
-  return `Write concise presentation copy for this small-business website. Return copy fields only. Do not return identifiers, phone numbers, prices, assets, claims, HTML, scripts, or deployment instructions.\n\n${JSON.stringify({
-    businessType: assessment.businessType,
-    businessName: assessment.businessName,
-    description: assessment.description,
-    fulfillmentArea: assessment.fulfillmentArea,
-    leadTime: assessment.leadTime,
-    offerings: assessment.catalog.map((item) => ({ name: item.name, description: item.description })),
-  })}`;
-}
-
 function slugPart(value: string, fallback: string): string {
   const normalized = value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
     .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
@@ -296,26 +249,9 @@ export function workflowVersionId(workflowId: string): string {
 
 export async function runMerchantWorkflow(inputValue: unknown, dependencies: WorkflowDependencies) {
   const input = MerchantWorkflowInputSchema.parse(inputValue);
-  const structuredOutputTimeoutMs = dependencies.structuredOutputTimeoutMs ?? DEFAULT_STRUCTURED_OUTPUT_TIMEOUT_MS;
   const emptyIntake = { timezone: "Asia/Kolkata", suppliedClaims: [], missingFacts: [] };
-  let assessment = resolveIntakeAssessment(emptyIntake, input.transcript, input.assetIds);
-  let missingFacts = actualMissingFacts(assessment, input.assetIds);
-  if (missingFacts.length) {
-    let intakeOutput: unknown = emptyIntake;
-    try {
-      intakeOutput = await invokeStructuredWithin(
-        dependencies.agent,
-        intakePrompt(input),
-        IntakeToolInputSchema,
-        structuredOutputTimeoutMs,
-      );
-    } catch {
-      // Grounded transcript extraction still owns authoritative fields and can
-      // return one consolidated question without waiting on model repair loops.
-    }
-    assessment = resolveIntakeAssessment(intakeOutput, input.transcript, input.assetIds);
-    missingFacts = actualMissingFacts(assessment, input.assetIds);
-  }
+  const assessment = resolveIntakeAssessment(emptyIntake, input.transcript, input.assetIds);
+  const missingFacts = actualMissingFacts(assessment, input.assetIds);
   if (missingFacts.length) {
     return { status: "awaiting_input" as const, missingFacts, customerMessages: [consolidatedQuestion(missingFacts)] };
   }
@@ -339,18 +275,11 @@ export async function runMerchantWorkflow(inputValue: unknown, dependencies: Wor
   const merchantId = input.merchantId ?? intakeBoundaryResult.merchantId;
   if (!merchantId) throw new Error("intake did not return the authenticated merchant scope");
 
-  let candidateCopy: unknown = {};
-  try {
-    candidateCopy = await invokeStructuredWithin(
-      dependencies.agent,
-      candidatePrompt(assessment),
-      CandidateCopySchema,
-      structuredOutputTimeoutMs,
-    );
-  } catch {
-    // The deterministic compiler owns safe fallback copy.
-  }
-  const spec = compileSiteSpec(assessment, candidateCopy, merchantId, input);
+  // A provider SDK may block synchronously even after reporting tool success.
+  // The release-critical path therefore compiles only code-owned copy. Model
+  // output can enhance a later immutable candidate, but can never gate intake,
+  // verification, approval, or publication.
+  const spec = compileSiteSpec(assessment, {}, merchantId, input);
   const candidateVersionId = workflowVersionId(input.workflowId);
   const candidate = CandidateResultSchema.parse(await dependencies.boundary.execute("candidate", {
     versionId: candidateVersionId,
