@@ -41,12 +41,15 @@ export const IntakeAssessmentSchema = z.object({
 }).strict();
 export type IntakeAssessment = z.infer<typeof IntakeAssessmentSchema>;
 
-// Business type is deliberately optional at the model boundary. Runtime code
-// derives the authoritative constrained value from the merchant transcript so
-// a model never needs to ask the customer to choose an internal enum.
-export const IntakeToolInputSchema = IntakeAssessmentSchema.extend({
+// The model boundary deliberately excludes contact numbers, prices, currencies,
+// and asset identifiers. Those fields are grounded by deterministic code from
+// the authenticated merchant bundle before any side effect is allowed.
+export const IntakeToolInputSchema = IntakeAssessmentSchema.omit({
+  orderWhatsAppNumber: true,
+  catalog: true,
+}).extend({
   businessType: BusinessTypeSchema.optional(),
-}).strict();
+}).strip();
 export type IntakeToolInput = z.infer<typeof IntakeToolInputSchema>;
 
 /**

@@ -49,6 +49,11 @@ const factLabels: Record<MissingFact, string> = {
   photos: "can you send at least one real photo",
 };
 
+const boundedReasoning = () => ({
+  cancelSignal: AbortSignal.timeout(15_000),
+  limits: { turns: 3, outputTokens: 2_000 },
+});
+
 export function actualMissingFacts(assessment: IntakeAssessment, suppliedAssets: readonly string[]): MissingFact[] {
   // Required fields are the authority. A model-provided missingFacts list is
   // advisory only and may not contradict facts already grounded from the
@@ -120,10 +125,10 @@ export function resolveIntakeAssessment(value: unknown, transcript: string, asse
     ...modelInput,
     businessName: grounded.businessName ?? modelInput.businessName,
     description: grounded.description ?? modelInput.description,
-    orderWhatsAppNumber: grounded.orderWhatsAppNumber ?? modelInput.orderWhatsAppNumber,
+    orderWhatsAppNumber: grounded.orderWhatsAppNumber,
     fulfillmentArea: grounded.fulfillmentArea ?? modelInput.fulfillmentArea,
     leadTime: grounded.leadTime ?? modelInput.leadTime,
-    catalog: groundedCatalog.length ? groundedCatalog : modelInput.catalog,
+    catalog: groundedCatalog,
   };
   const businessType = inferStudioBusinessType([
     transcript,
@@ -263,14 +268,23 @@ export function workflowVersionId(workflowId: string): string {
 
 export async function runMerchantWorkflow(inputValue: unknown, dependencies: WorkflowDependencies) {
   const input = MerchantWorkflowInputSchema.parse(inputValue);
-  let intakeOutput: unknown = { timezone: "Asia/Kolkata", suppliedClaims: [], catalog: [], missingFacts: [] };
-  try {
-    intakeOutput = (await dependencies.agent.invoke(intakePrompt(input), { structuredOutputSchema: IntakeToolInputSchema })).structuredOutput;
-  } catch {
-    // Grounded transcript extraction can still produce a safe basic site.
+  const emptyIntake = { timezone: "Asia/Kolkata", suppliedClaims: [], missingFacts: [] };
+  let assessment = resolveIntakeAssessment(emptyIntake, input.transcript, input.assetIds);
+  let missingFacts = actualMissingFacts(assessment, input.assetIds);
+  if (missingFacts.length) {
+    let intakeOutput: unknown = emptyIntake;
+    try {
+      intakeOutput = (await dependencies.agent.invoke(intakePrompt(input), {
+        structuredOutputSchema: IntakeToolInputSchema,
+        ...boundedReasoning(),
+      })).structuredOutput;
+    } catch {
+      // Grounded transcript extraction still owns authoritative fields and can
+      // return one consolidated question without waiting on model repair loops.
+    }
+    assessment = resolveIntakeAssessment(intakeOutput, input.transcript, input.assetIds);
+    missingFacts = actualMissingFacts(assessment, input.assetIds);
   }
-  const assessment = resolveIntakeAssessment(intakeOutput, input.transcript, input.assetIds);
-  const missingFacts = actualMissingFacts(assessment, input.assetIds);
   if (missingFacts.length) {
     return { status: "awaiting_input" as const, missingFacts, customerMessages: [consolidatedQuestion(missingFacts)] };
   }
@@ -296,7 +310,10 @@ export async function runMerchantWorkflow(inputValue: unknown, dependencies: Wor
 
   let candidateCopy: unknown = {};
   try {
-    candidateCopy = (await dependencies.agent.invoke(candidatePrompt(assessment), { structuredOutputSchema: CandidateCopySchema })).structuredOutput;
+    candidateCopy = (await dependencies.agent.invoke(candidatePrompt(assessment), {
+      structuredOutputSchema: CandidateCopySchema,
+      ...boundedReasoning(),
+    })).structuredOutput;
   } catch {
     // The deterministic compiler owns safe fallback copy.
   }
@@ -342,7 +359,10 @@ export async function runPublishedImprovementWorkflow(inputValue: unknown, depen
   const metricsResult = BoundaryResultSchema.parse(await dependencies.boundary.execute("metrics", { siteId: input.siteId, days: 7 }, input.context));
   const metrics = MetricsSchema.parse(metricsResult.metrics);
   const eligibleForCandidate = input.improvementRequested || metrics.qualifiedViews >= 100 || (metrics.until - metrics.since >= 7 * 86_400_000 && metrics.qualifiedViews > 0);
-  const proposalResult = await dependencies.agent.invoke(improvementPrompt(metrics, input.currentSpec, eligibleForCandidate), { structuredOutputSchema: ImprovementProposalSchema });
+  const proposalResult = await dependencies.agent.invoke(improvementPrompt(metrics, input.currentSpec, eligibleForCandidate), {
+    structuredOutputSchema: ImprovementProposalSchema,
+    ...boundedReasoning(),
+  });
   const modelProposal = ImprovementProposalSchema.parse(proposalResult.structuredOutput);
   const improvement: ImprovementProposal = ImprovementProposalSchema.parse({
     ...modelProposal,

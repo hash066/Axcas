@@ -126,7 +126,7 @@ const input = {
   projectId: "project-demo-1",
   intent: "website" as const,
   context,
-  transcript: "Golden Crust sells sourdough in Hubli for 180 rupees. Orders need 24 hours.",
+  transcript: "My business is Golden Crust, a home bakery in Hubli. Customers should contact +91 98765 43210 on WhatsApp. I serve Hubli and need 24 hours' notice. Sourdough loaf is ₹180.",
   assetIds: ["asset-bread-1"],
   now: 2_000,
   improvementRequested: false,
@@ -205,11 +205,27 @@ describe("Strands merchant workflow", () => {
     expect(actualMissingFacts(grounded, ["merchant-cake-photo"])).toEqual([]);
   });
 
+  it("does not send a complete grounded merchant bundle through intake structured output", async () => {
+    const completeInput = {
+      ...input,
+      transcript: "My business is Golden Crust Hubli, a home bakery in Hubli. I make hazelnut cakes, brownies, and sourdough. Customers should contact +91 98765 43210 on WhatsApp. I serve Hubli city and need 24 hours' notice. Hazelnut cake is ₹650, a brownie box is ₹350, and sourdough is ₹180. I want Both—a website and Reels.",
+      intent: "both" as const,
+    };
+    const agent = agentWith({ heroHeadline: "Fresh bakes in Hubli" });
+
+    const result = await runMerchantWorkflow(completeInput, { agent, boundary: boundary() });
+
+    expect(result.status).toBe("awaiting_approval");
+    expect(agent.invoke).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(agent.invoke).mock.calls[0]?.[0]).toContain("presentation copy");
+  });
+
   it("asks one consolidated, customer-safe question when intake is incomplete", async () => {
     const agent = agentWith({ ...assessment, orderWhatsAppNumber: undefined, leadTime: undefined, missingFacts: ["orderWhatsAppNumber", "leadTime"] });
     const api = boundary();
+    const incompleteInput = { ...input, transcript: input.transcript.replace(/ Customers should contact[^.]+\./, "") };
 
-    const result = await runMerchantWorkflow(input, { agent, boundary: api });
+    const result = await runMerchantWorkflow(incompleteInput, { agent, boundary: api });
 
     expect(result).toEqual({
       status: "awaiting_input",
@@ -250,7 +266,7 @@ describe("Strands merchant workflow", () => {
       approvalId: "approval-demo",
       previewUrl: "https://example.workers.dev/preview/pgp_demo.sig",
     });
-    expect(vi.mocked(agent.invoke)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(agent.invoke)).toHaveBeenCalledTimes(1);
   });
 
   it("stops before approval and metrics when independent verification fails", async () => {
@@ -271,7 +287,7 @@ describe("Strands merchant workflow", () => {
     expect(result.status).toBe("awaiting_approval");
     const candidate = vi.mocked(api.execute).mock.calls.find(([action]) => action === "candidate")?.[1] as { spec: typeof spec };
     expect(candidate.spec.hero.imageAssetId).toBe("asset-bread-1");
-    expect(candidate.spec.suppliedClaims).toEqual(["Baked to order"]);
+    expect(candidate.spec.suppliedClaims).toEqual([]);
   });
 });
 
@@ -323,8 +339,8 @@ describe("native Strands typed-tool loop", () => {
 
     expect(result).toEqual({
       status: "awaiting_input",
-      missingFacts: ["photos"],
-      customerMessages: ["One quick thing before I build: can you send at least one real photo?"],
+      missingFacts: ["offerings", "photos"],
+      customerMessages: ["One quick thing before I build: what is at least one product or service and its price, and can you send at least one real photo?"],
     });
     expect(api.execute).not.toHaveBeenCalled();
   });

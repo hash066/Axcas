@@ -4,7 +4,11 @@ import type { z } from "zod";
 
 export type StructuredAgentResult = { structuredOutput?: unknown };
 export type StructuredAgent = {
-  invoke: (prompt: string, options?: { structuredOutputSchema: z.ZodType }) => Promise<StructuredAgentResult>;
+  invoke: (prompt: string, options?: {
+    structuredOutputSchema: z.ZodType;
+    cancelSignal?: AbortSignal;
+    limits?: { turns?: number; totalTokens?: number; outputTokens?: number };
+  }) => Promise<StructuredAgentResult>;
 };
 
 const SYSTEM_PROMPT = `You are Axcas Workflow Orchestrator, an operations agent for WhatsApp-first small businesses.
