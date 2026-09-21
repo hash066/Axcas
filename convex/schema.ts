@@ -424,6 +424,18 @@ export default defineSchema({
     .index("by_reel_id", ["reelId"])
     .index("by_merchant", ["merchantId"]),
 
+  reelOptionSets: defineTable({
+    optionSetId: v.string(),
+    merchantId: v.string(),
+    plansJson: v.string(),
+    selectedIndex: v.optional(v.number()),
+    approvalId: v.optional(v.string()),
+    expiresAt: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_option_set_id", ["optionSetId"])
+    .index("by_merchant_created", ["merchantId", "createdAt"]),
+
   socialCampaigns: defineTable({
     campaignId: v.string(),
     merchantId: v.string(),

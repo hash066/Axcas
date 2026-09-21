@@ -1056,6 +1056,49 @@ export const adminRegisterReel = action({
   },
 });
 
+export const registerReelOptionSetInternal = internalMutation({
+  args: { optionSetId: v.string(), merchantId: v.string(), plansJson: v.string(), expiresAt: v.number(), createdAt: v.number() },
+  handler: async (context, args) => {
+    const existing = await context.db.query("reelOptionSets").withIndex("by_option_set_id", (range) => range.eq("optionSetId", args.optionSetId)).unique();
+    if (existing) return { inserted: false };
+    await context.db.insert("reelOptionSets", args);
+    return { inserted: true };
+  },
+});
+
+export const adminRegisterReelOptionSet = action({
+  args: { serviceSecret: v.string(), optionSetId: v.string(), merchantId: v.string(), plansJson: v.string(), expiresAt: v.number(), createdAt: v.number() },
+  handler: async (context, args): Promise<{ inserted: boolean }> => {
+    requireServiceSecret(args.serviceSecret);
+    const { serviceSecret: _secret, ...record } = args;
+    return context.runMutation(internal.growth.registerReelOptionSetInternal, record);
+  },
+});
+
+export const selectReelOptionInternal = internalMutation({
+  args: { merchantId: v.string(), selectedIndex: v.number(), approvalId: v.string(), now: v.number() },
+  handler: async (context, args) => {
+    const options = await context.db.query("reelOptionSets").withIndex("by_merchant_created", (range) => range.eq("merchantId", args.merchantId)).collect();
+    const active = options.filter((entry) => entry.expiresAt >= args.now).sort((left, right) => right.createdAt - left.createdAt)[0];
+    if (!active) return null;
+    if (active.selectedIndex !== undefined) {
+      return { replay: true, approvalId: active.approvalId, selectedIndex: active.selectedIndex, plansJson: active.plansJson };
+    }
+    if (!Number.isInteger(args.selectedIndex) || args.selectedIndex < 0 || args.selectedIndex > 2) throw new Error("invalid reel option");
+    await context.db.patch(active._id, { selectedIndex: args.selectedIndex, approvalId: args.approvalId });
+    return { replay: false, approvalId: args.approvalId, selectedIndex: args.selectedIndex, plansJson: active.plansJson };
+  },
+});
+
+export const adminSelectReelOption = action({
+  args: { serviceSecret: v.string(), merchantId: v.string(), selectedIndex: v.number(), approvalId: v.string(), now: v.number() },
+  handler: async (context, args): Promise<null | { replay: boolean; approvalId?: string; selectedIndex: number; plansJson: string }> => {
+    requireServiceSecret(args.serviceSecret);
+    const { serviceSecret: _secret, ...record } = args;
+    return context.runMutation(internal.growth.selectReelOptionInternal, record);
+  },
+});
+
 export const registerAssetInternal = internalMutation({
   args: { assetId: v.string(), merchantId: v.string(), storageBackend: v.union(v.literal("r2"), v.literal("convex")), objectKey: v.optional(v.string()), convexStorageId: v.optional(v.id("_storage")), sha256: v.string(), contentType: v.string(), byteLength: v.number(), sourceProviderMessageId: v.string(), createdAt: v.number() },
   handler: async (context, args) => {

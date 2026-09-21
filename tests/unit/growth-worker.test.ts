@@ -33,6 +33,8 @@ function adminBoundary(): GrowthAdminBoundary {
     attachApprovalMessage: vi.fn(async () => ({ attached: true })),
     createCallBatch: vi.fn(async () => ({ inserted: true })),
     registerReel: vi.fn(async () => ({ inserted: true })),
+    registerReelOptionSet: vi.fn(async () => ({ inserted: true })),
+    selectReelOption: vi.fn(async () => null),
     registerAsset: vi.fn(async () => ({ inserted: true })),
     uploadAsset: vi.fn(async () => ({ inserted: true, storageBackend: "convex" as const })),
     getPrivateAsset: vi.fn(async (assetId: string) => assetId === "reel-output-1"
@@ -795,15 +797,40 @@ describe("growth Worker", () => {
       expect(response.status).toBe(200);
       expect(await response.json()).toMatchObject({ stage: "published", siteUrl: "https://proofgate.test/s/golden-crust" });
       expect(admin.promoteRelease).toHaveBeenCalledWith({ approvalId: "approval-both" }, expect.anything());
+      expect(admin.registerReelOptionSet).toHaveBeenCalledWith(expect.objectContaining({
+        optionSetId: expect.stringMatching(/^reel-options-/),
+        merchantId: "merchant-demo",
+        plans: [expect.objectContaining({ angle: "Offer + urgency" }), expect.objectContaining({ angle: "Process + proof" }), expect.objectContaining({ angle: "Question + answer" })],
+      }), expect.anything());
+      expect(admin.registerReel).not.toHaveBeenCalled();
+      expect(admin.createApproval).not.toHaveBeenCalled();
+      expect(messageNumber).toBe(2);
+
+      const plans = (admin.registerReelOptionSet as any).mock.calls[0][0].plans;
+      (admin.selectReelOption as ReturnType<typeof vi.fn>).mockResolvedValue({ replay: false, selectedIndex: 1, plans });
+      const choiceBody = JSON.stringify({ entry: [{ changes: [{ value: { messages: [{ from: sender, id: "wamid.reel-choice", type: "text", text: { body: "2" } }] } }] }] });
+      const selected = await createApp(undefined, growth, admin).request("https://proofgate.test/whatsapp/webhook", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-hub-signature-256": await metaSignatureForTest(choiceBody, secret) },
+        body: choiceBody,
+      }, {
+        META_APP_SECRET: secret,
+        META_PHONE_NUMBER_ID: "123456789",
+        META_ACCESS_TOKEN: "meta-token",
+        PROOFGATE_DATA_KEY: Buffer.alloc(32, 7).toString("base64"),
+      } as never);
+      expect(selected.status).toBe(200);
+      expect(await selected.json()).toMatchObject({ stage: "reel_approval_sent", approvalId: expect.stringMatching(/^approval-/) });
+      expect(admin.selectReelOption).toHaveBeenCalledWith(expect.objectContaining({ merchantId: expect.stringMatching(/^merchant-/), selectedIndex: 1 }), expect.anything());
       expect(admin.registerReel).toHaveBeenCalledWith(
-        expect.objectContaining({ status: "draft", scenes: expect.any(Array) }),
+        expect.objectContaining({ angle: "Process + proof", status: "draft" }),
         expect.stringMatching(/^[a-f0-9]{64}$/),
         expect.stringMatching(/^approval-/),
         expect.stringMatching(/^aesgcm:v1:/),
         expect.anything(),
       );
-      expect(admin.createApproval).toHaveBeenCalledWith(expect.objectContaining({ type: "reel", checklist: expect.stringContaining("Ready to make your reel") }), expect.anything());
-      expect(messageNumber).toBe(2);
+      expect(admin.createApproval).toHaveBeenCalledWith(expect.objectContaining({ type: "reel", checklist: expect.stringContaining("You chose option 2") }), expect.anything());
+      expect(messageNumber).toBe(3);
     } finally {
       vi.unstubAllGlobals();
     }

@@ -226,3 +226,25 @@ export function buildStudioReelPlan(
   });
   return { plan, recommendations };
 }
+
+/** Three merchant-media concepts that vary only the opening hook/angle. */
+export function buildStudioReelVariants(
+  input: unknown,
+  owner: StudioOwnerIdentity,
+): [ReelPlanV1, ReelPlanV1, ReelPlanV1] {
+  const project = StudioProjectInputSchema.parse(input);
+  const base = buildStudioReelPlan(project, owner).plan;
+  const concepts = [
+    { angle: "Offer + urgency", hook: project.layerOverrides!.hook },
+    { angle: "Process + proof", hook: `See how ${project.businessName} makes it` },
+    { angle: "Question + answer", hook: `What should customers know about ${project.businessName}?` },
+  ] as const;
+  return concepts.map((concept, index) => ReelPlanSchema.parse({
+    ...base,
+    reelId: `${base.reelId}-${index + 1}`.slice(0, 64),
+    angle: concept.angle,
+    hook: concept.hook,
+    scenes: base.scenes.map((scene, sceneIndex) => sceneIndex === 0 ? { ...scene, overlay: concept.hook } : scene),
+    voiceover: `${concept.hook}. ${project.layerOverrides!.proof}. ${project.layerOverrides!.cta}.`,
+  })) as [ReelPlanV1, ReelPlanV1, ReelPlanV1];
+}

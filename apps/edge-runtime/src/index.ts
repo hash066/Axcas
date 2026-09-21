@@ -7,7 +7,7 @@ import { BusinessBriefInputSchema, BusinessBriefSchema, LeadConsentSchema, ReelP
 import { StudioIntakeInputSchema, StudioIntentSchema, StudioProjectInputSchema, formatApprovalChecklist, reelAngleLabel, siteDisplayName, type StudioIntent, type StudioProjectInput } from "../../../packages/domain/src/studio";
 import { CustomerOutboxMessageSchema, WorkflowProgressSchema, WorkflowStatusSchema, customerProgressMessage, decodeProjectCursor, encodeProjectCursor, nextProjectCursor, type ProjectSyncCursor } from "../../../packages/domain/src/workflow";
 import { quotaExceededCustomerMessage, type UsageMetric, type UsageReservationBatch } from "../../../packages/domain/src/usage";
-import { buildStudioReelPlan, buildStudioWebsite, MissingStudioFactsError, studioProjectFromBusinessBrief } from "../../../packages/domain/src/studio-builder";
+import { buildStudioReelPlan, buildStudioReelVariants, buildStudioWebsite, MissingStudioFactsError, studioProjectFromBusinessBrief } from "../../../packages/domain/src/studio-builder";
 import { ReelRenderEvidenceSchema, type ReelRenderEvidence } from "../../../packages/domain/src/reel-evidence";
 import { deriveTenantIdentity, tenantScopedAssetId } from "../../../packages/domain/src/tenant";
 import { DecisionPolicySchema, DecisionRequestSchema, evaluateDecision, type DecisionPolicyV1 } from "../../../packages/domain/src/decision-policy";
@@ -111,6 +111,8 @@ export type GrowthAdminBoundary = {
   attachApprovalMessage: (approvalId: string, providerMessageId: string, bindings?: Bindings) => Promise<unknown>;
   createCallBatch: (batch: CallBatch, approvalId: string, bindings?: Bindings) => Promise<unknown>;
   registerReel: (plan: ReelPlanV1, planHash: string, approvalId: string, deliveryRecipientCiphertext?: string, bindings?: Bindings) => Promise<unknown>;
+  registerReelOptionSet: (input: { optionSetId: string; merchantId: string; plans: [ReelPlanV1, ReelPlanV1, ReelPlanV1]; expiresAt: number }, bindings?: Bindings) => Promise<unknown>;
+  selectReelOption: (input: { merchantId: string; selectedIndex: number; approvalId: string; now: number }, bindings?: Bindings) => Promise<null | { replay: boolean; approvalId?: string; selectedIndex: number; plans: [ReelPlanV1, ReelPlanV1, ReelPlanV1] }>;
   registerSocialCampaign: (input: { campaign: SocialCampaign; approvalId: string }, bindings?: Bindings) => Promise<unknown>;
   registerAsset: (input: { assetId: string; merchantId: string; storageBackend: "r2" | "convex"; objectKey?: string; convexStorageId?: string; sha256: string; contentType: string; byteLength: number; sourceProviderMessageId: string }, bindings?: Bindings) => Promise<unknown>;
   uploadAsset: (input: { assetId: string; merchantId: string; sha256: string; contentType: string; byteLength: number; sourceProviderMessageId: string; body: Uint8Array }, bindings?: Bindings) => Promise<{ inserted: boolean; storageBackend: "convex" }>;
@@ -203,11 +205,11 @@ async function workflowIdForProviderMessage(providerMessageId: string): Promise<
   return `workflow-${(await sha256(providerMessageId)).slice(0, 32)}`;
 }
 
-function ordinaryMetaMessages(payload: unknown): Array<{ senderWaId: string; providerMessageId: string }> {
-  const result: Array<{ senderWaId: string; providerMessageId: string }> = [];
+function ordinaryMetaMessages(payload: unknown): Array<{ senderWaId: string; providerMessageId: string; textBody?: string }> {
+  const result: Array<{ senderWaId: string; providerMessageId: string; textBody?: string }> = [];
   for (const entry of (payload as any)?.entry ?? []) for (const change of entry?.changes ?? []) for (const message of change?.value?.messages ?? []) {
     if (typeof message?.from === "string" && /^\d{8,15}$/.test(message.from) && typeof message.id === "string" && message.id.length >= 3 && message.id.length <= 256) {
-      result.push({ senderWaId: message.from, providerMessageId: message.id });
+      result.push({ senderWaId: message.from, providerMessageId: message.id, ...(typeof message.text?.body === "string" ? { textBody: message.text.body } : {}) });
     }
   }
   return result;
@@ -373,6 +375,16 @@ const liveAdminBoundary: GrowthAdminBoundary = {
   attachApprovalMessage: (approvalId, providerMessageId, bindings) => adminClient(bindings).action((api as any).growth.adminAttachApprovalMessage, { serviceSecret: serviceSecret(bindings), approvalId, providerMessageId }),
   createCallBatch: (batch, approvalId, bindings) => adminClient(bindings).action((api as any).growth.adminCreateCallBatch, { serviceSecret: serviceSecret(bindings), ...batch, approvalId, createdAt: Date.now() }),
   registerReel: (plan, planHash, approvalId, deliveryRecipientCiphertext, bindings) => adminClient(bindings).action((api as any).growth.adminRegisterReel, { serviceSecret: serviceSecret(bindings), reelId: plan.reelId, merchantId: plan.merchantId, planJson: JSON.stringify(plan), planHash, approvalId, deliveryRecipientCiphertext, status: "draft", createdAt: Date.now() }),
+  registerReelOptionSet: (input, bindings) => adminClient(bindings).action((api as any).growth.adminRegisterReelOptionSet, {
+    serviceSecret: serviceSecret(bindings), optionSetId: input.optionSetId, merchantId: input.merchantId,
+    plansJson: JSON.stringify(input.plans), expiresAt: input.expiresAt, createdAt: Date.now(),
+  }),
+  selectReelOption: async (input, bindings) => {
+    const selected = await adminClient(bindings).action((api as any).growth.adminSelectReelOption, { serviceSecret: serviceSecret(bindings), ...input }) as null | { replay: boolean; approvalId?: string; selectedIndex: number; plansJson: string };
+    if (!selected) return null;
+    const plans = ReelPlanSchema.array().length(3).parse(JSON.parse(selected.plansJson)) as [ReelPlanV1, ReelPlanV1, ReelPlanV1];
+    return { ...selected, plans };
+  },
   registerSocialCampaign: ({ campaign, approvalId }, bindings) => adminClient(bindings).action((api as any).growth.adminRegisterSocialCampaign, {
     serviceSecret: serviceSecret(bindings), campaignId: campaign.campaignId, merchantId: campaign.merchantId,
     campaignJson: JSON.stringify(campaign), scopeHash: campaign.scopeHash, approvalId, createdAt: Date.now(),
@@ -1142,38 +1154,18 @@ export function createApp(evidenceBoundary: EvidenceBoundary = liveEvidenceBound
             if (bothProject && context.env.PROOFGATE_DATA_KEY) {
               try {
                 const identity = await deriveTenantIdentity(approval.senderWaId);
-                const built = buildStudioReelPlan(bothProject.project, identity);
-                const planHash = await sha256(canonicalize(built.plan));
-                const reelApprovalId = `approval-${crypto.randomUUID()}`;
-                const reelUsage = await adminBoundary.reserveUsage({
-                  merchantId: result.merchantId,
-                  operationId: `reel:${built.plan.reelId}`,
-                  idempotencyKey: `reserve:reel:${planHash}`,
-                  requestedAt: Date.now(),
-                  reservations: [
-                    { metric: "render_seconds", quantity: Math.ceil(built.plan.scenes.reduce((total, scene) => total + scene.durationMs, 0) / 1000) },
-                    { metric: "polly_characters", quantity: built.plan.voiceover.length },
-                  ],
-                }, context.env);
-                if (reelUsage.allowed) {
-                  await adminBoundary.registerReel(built.plan, planHash, reelApprovalId, await encryptSensitive(approval.senderWaId, context.env.PROOFGATE_DATA_KEY), context.env);
-                  const reelChecklist = formatApprovalChecklist({
-                    type: "reel",
-                    subject: reelAngleLabel(built.plan.angle),
-                    details: ["Recommended: show the offer clearly", "Alternative: show how it is made", "Alternative: answer a common customer question", "Uses only your real photos and is sent back privately"],
-                  });
-                  await adminBoundary.createApproval({ approvalId: reelApprovalId, merchantId: result.merchantId, type: "reel", scopeHash: planHash, expiresAt: Date.now() + 86_400_000, checklist: reelChecklist }, context.env);
-                  const reelReceipt = await sendApprovalButtons({
-                    graphApiVersion: context.env.META_GRAPH_API_VERSION ?? "v20.0",
-                    phoneNumberId: context.env.META_PHONE_NUMBER_ID,
-                    accessToken: context.env.META_ACCESS_TOKEN,
-                    recipientWaId: approval.senderWaId,
-                    approvalId: reelApprovalId,
-                    body: reelChecklist,
-                  });
-                  await adminBoundary.attachApprovalMessage(reelApprovalId, reelReceipt.providerMessageId, context.env);
-                  await recordOutboundMessage(result.merchantId, `wa-out:approval:${reelApprovalId}`, reelReceipt.providerMessageId, context.env);
-                }
+                const variants = buildStudioReelVariants(bothProject.project, identity);
+                const optionSetId = `reel-options-${crypto.randomUUID()}`;
+                await adminBoundary.registerReelOptionSet({ optionSetId, merchantId: result.merchantId, plans: variants, expiresAt: Date.now() + 86_400_000 }, context.env);
+                const angles = variants.map((plan, index) => `${index + 1}. ${reelAngleLabel(plan.angle)} — ${plan.hook}`).join("\n");
+                const angleReceipt = await sendTextMessage({
+                  graphApiVersion: context.env.META_GRAPH_API_VERSION ?? "v20.0",
+                  phoneNumberId: context.env.META_PHONE_NUMBER_ID,
+                  accessToken: context.env.META_ACCESS_TOKEN,
+                  recipientWaId: approval.senderWaId,
+                  body: `Choose your reel direction:\n${angles}\n\nReply 1, 2, or 3. I’ll then show one final approval checklist before rendering.`,
+                });
+                await recordOutboundMessage(result.merchantId, `wa-out:reel-options:${optionSetId}`, angleReceipt.providerMessageId, context.env);
               } catch {
                 // The published site remains valid; reel preparation is independently retryable.
                 console.error(JSON.stringify({
@@ -1215,6 +1207,38 @@ export function createApp(evidenceBoundary: EvidenceBoundary = liveEvidenceBound
     }
     const inbound = ordinaryMetaMessages(payload);
     if (!inbound.length) return growthBoundary.forwardToHermes(rawBody, context.req.raw.headers, context.env);
+    for (const message of inbound) {
+      const choice = /^\s*([123])\s*$/.exec(message.textBody ?? "");
+      if (!choice || !context.env?.META_PHONE_NUMBER_ID || !context.env.META_ACCESS_TOKEN || !context.env.PROOFGATE_DATA_KEY) continue;
+      const tenant = await deriveTenantIdentity(message.senderWaId);
+      const approvalId = `approval-${crypto.randomUUID()}`;
+      const selected = await adminBoundary.selectReelOption({ merchantId: tenant.merchantId, selectedIndex: Number(choice[1]) - 1, approvalId, now: Date.now() }, context.env);
+      if (!selected) continue;
+      if (selected.replay) return context.json({ accepted: true, duplicate: true, stage: "reel_approval_sent", approvalId: selected.approvalId }, 200);
+      const plan = selected.plans[selected.selectedIndex]!;
+      const planHash = await sha256(canonicalize(plan));
+      const usage = await adminBoundary.reserveUsage({
+        merchantId: tenant.merchantId, operationId: `reel:${plan.reelId}`, idempotencyKey: `reserve:reel:${planHash}`, requestedAt: Date.now(),
+        reservations: [
+          { metric: "render_seconds", quantity: Math.ceil(plan.scenes.reduce((total, scene) => total + scene.durationMs, 0) / 1000) },
+          { metric: "polly_characters", quantity: plan.voiceover.length },
+        ],
+      }, context.env);
+      if (!usage.allowed) return context.json({ accepted: true, stage: "usage_limit", message: quotaExceededCustomerMessage(usage.blockingMetric ?? "render_seconds") }, 200);
+      await adminBoundary.registerReel(plan, planHash, approvalId, await encryptSensitive(message.senderWaId, context.env.PROOFGATE_DATA_KEY), context.env);
+      const checklist = formatApprovalChecklist({
+        type: "reel", subject: reelAngleLabel(plan.angle),
+        details: [`You chose option ${selected.selectedIndex + 1}`, "Uses only your real photos", "15 seconds, full-screen vertical", "Sent back privately and never posted"],
+      });
+      await adminBoundary.createApproval({ approvalId, merchantId: tenant.merchantId, type: "reel", scopeHash: planHash, expiresAt: Date.now() + 86_400_000, checklist }, context.env);
+      const receipt = await sendApprovalButtons({
+        graphApiVersion: context.env.META_GRAPH_API_VERSION ?? "v20.0", phoneNumberId: context.env.META_PHONE_NUMBER_ID,
+        accessToken: context.env.META_ACCESS_TOKEN, recipientWaId: message.senderWaId, approvalId, body: checklist,
+      });
+      await adminBoundary.attachApprovalMessage(approvalId, receipt.providerMessageId, context.env);
+      await recordOutboundMessage(tenant.merchantId, `wa-out:approval:${approvalId}`, receipt.providerMessageId, context.env);
+      return context.json({ accepted: true, stage: "reel_approval_sent", approvalId, providerMessageId: receipt.providerMessageId }, 200);
+    }
     const workflows = await Promise.all(inbound.map(async (message) => {
       const tenant = await deriveTenantIdentity(message.senderWaId);
       const workflowId = await workflowIdForProviderMessage(message.providerMessageId);
