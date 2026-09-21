@@ -1382,12 +1382,16 @@ export function createApp(evidenceBoundary: EvidenceBoundary = liveEvidenceBound
     if (!tenant) return context.text("Authenticated WhatsApp sender is required", 400);
     if (tenant.merchantId !== spec.business.merchantId) return context.text("Hermes tenant identity mismatch", 403);
     if (!payload.versionId || !/^[a-zA-Z0-9_-]{3,128}$/.test(payload.versionId)) return context.text("Invalid version ID", 400);
-    const specHash = await sha256(canonicalize(spec));
-    const result = await adminBoundary.createCandidate({ spec, versionId: payload.versionId, parentVersionId: payload.parentVersionId, specHash, actor: `hermes:${tenant.ownerWaIdHash}` }, context.env);
+    const proposedSpecHash = await sha256(canonicalize(spec));
+    const result = await adminBoundary.createCandidate({ spec, versionId: payload.versionId, parentVersionId: payload.parentVersionId, specHash: proposedSpecHash, actor: `hermes:${tenant.ownerWaIdHash}` }, context.env);
+    const persistedSpecHash = result && typeof result === "object" && typeof (result as Record<string, unknown>).specHash === "string"
+      ? (result as Record<string, unknown>).specHash as string
+      : proposedSpecHash;
+    if (!/^[a-f0-9]{64}$/.test(persistedSpecHash)) return context.text("Invalid persisted candidate scope", 500);
     const previewExpiresAt = Date.now() + 24 * 60 * 60_000;
-    const previewToken = await createPreviewToken({ siteId: spec.siteId, versionId: payload.versionId, specHash, expiresAt: previewExpiresAt }, serviceSecret(context.env));
+    const previewToken = await createPreviewToken({ siteId: spec.siteId, versionId: payload.versionId, specHash: persistedSpecHash, expiresAt: previewExpiresAt }, serviceSecret(context.env));
     const previewUrl = `${new URL(context.req.url).origin}/preview/${previewToken}`;
-    return context.json({ accepted: true, specHash, previewUrl, previewExpiresAt, result }, 201);
+    return context.json({ accepted: true, specHash: persistedSpecHash, previewUrl, previewExpiresAt, result }, 201);
   });
   app.post("/internal/verification-capability", async (context) => {
     if (!adminAuthorized(context.req.header("authorization"), context.env)) return context.text("Unauthorized", 401);

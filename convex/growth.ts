@@ -842,20 +842,26 @@ export const createCandidateInternal = internalMutation({
     if (!site) throw new Error("site creation failed");
     if (site.merchantId !== args.merchantId) throw new Error("site slug belongs to another merchant");
     const existing = await context.db.query("siteVersions").withIndex("by_site_version", (range) => range.eq("siteId", site!._id).eq("versionId", args.versionId)).unique();
-    if (existing && (existing.specHash !== args.specHash || existing.specJson !== args.specJson)) throw new Error("immutable version conflict");
-    const siteVersionId = existing?._id ?? await context.db.insert("siteVersions", { siteId: site._id, versionId: args.versionId, parentVersionId: args.parentVersionId, specJson: args.specJson, specHash: args.specHash, actor: args.actor, createdAt: args.createdAt });
+    // The version ID is the workflow's immutable candidate identity. A retry
+    // may produce different presentation copy, but it must resume the first
+    // candidate rather than mutate it or fail the merchant journey.
+    if (existing) {
+      await context.db.patch(site._id, { canaryVersionId: existing.versionId, updatedAt: args.createdAt });
+      return { siteId: site._id, siteVersionId: existing._id, inserted: false, replayed: true, specHash: existing.specHash };
+    }
+    const siteVersionId = await context.db.insert("siteVersions", { siteId: site._id, versionId: args.versionId, parentVersionId: args.parentVersionId, specJson: args.specJson, specHash: args.specHash, actor: args.actor, createdAt: args.createdAt });
     await context.db.patch(site._id, { canaryVersionId: args.versionId, updatedAt: args.createdAt });
-    return { siteId: site._id, siteVersionId, inserted: !existing };
+    return { siteId: site._id, siteVersionId, inserted: true, replayed: false, specHash: args.specHash };
   },
 });
 
 export const adminCreateCandidate = action({
   args: { serviceSecret: v.string(), merchantId: v.string(), slug: v.string(), versionId: v.string(), parentVersionId: v.optional(v.string()), specJson: v.string(), specHash: v.string(), actor: v.string(), createdAt: v.number() },
-  handler: async (context, args): Promise<{ inserted: boolean }> => {
+  handler: async (context, args): Promise<{ inserted: boolean; replayed: boolean; specHash: string }> => {
     requireServiceSecret(args.serviceSecret);
     const { serviceSecret: _secret, ...record } = args;
     const result = await context.runMutation(internal.growth.createCandidateInternal, record);
-    return { inserted: result.inserted };
+    return { inserted: result.inserted, replayed: result.replayed, specHash: result.specHash };
   },
 });
 

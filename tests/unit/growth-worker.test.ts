@@ -974,6 +974,28 @@ describe("growth Worker", () => {
     expect(admin.createCandidate).not.toHaveBeenCalled();
   });
 
+  it("replays the first immutable candidate when model copy drifts on retry", async () => {
+    const admin = adminBoundary();
+    const owner = "919876543210";
+    const tenant = await deriveTenantIdentity(owner);
+    const persistedSpecHash = "b".repeat(64);
+    (admin.createCandidate as ReturnType<typeof vi.fn>).mockResolvedValue({ inserted: false, replayed: true, specHash: persistedSpecHash });
+    const candidateSpec = {
+      ...initialBakerySiteSpec,
+      siteId: "golden-crust-retry",
+      business: { ...initialBakerySiteSpec.business, merchantId: tenant.merchantId, orderWhatsAppNumber: "+919876543210" },
+    };
+
+    const response = await createApp(undefined, boundary(), admin).request("http://proofgate.test/internal/candidate", {
+      method: "POST",
+      headers: { authorization: "Bearer service-secret", "content-type": "application/json", "x-hermes-user-id": owner },
+      body: JSON.stringify({ versionId: "version-workflow-retry", spec: candidateSpec }),
+    }, { PROOFGATE_SERVICE_SECRET: "service-secret" });
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({ accepted: true, specHash: persistedSpecHash, result: { inserted: false, replayed: true } });
+  });
+
   it("accepts a typed Hermes intake only from the bound owner", async () => {
     const admin = adminBoundary();
     const owner = "919876543210";
