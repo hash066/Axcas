@@ -6,6 +6,7 @@ describe("isolated Studio verifier Worker", () => {
   it("uses the private Axcas edge service binding for preview and evidence subrequests", async () => {
     const edge = {
       fetch: vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        expect(init?.redirect).toBe("manual");
         const url = String(input);
         if (url.includes("/preview/pgp_") && !url.includes("/assets/")) {
           return new Response('<!doctype html><body data-pg-version="site-revision-1" data-pg-hash="' + "a".repeat(64) + '"><div data-pg="preview-banner"></div><div data-pg="catalog"><img src="/preview/pgp_token.signature/assets/merchant-photo"></div><a data-pg="primary-cta" href="#preview-only"></a></body>', {
@@ -38,6 +39,7 @@ describe("isolated Studio verifier Worker", () => {
 
   it("checks the immutable public preview and spends only its single-use evidence capability", async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.redirect).toBe("manual");
       const url = String(input);
       if (url.includes("/preview/pgp_") && !url.includes("/assets/")) {
         return new Response('<!doctype html><body data-pg-version="site-revision-1" data-pg-hash="' + "a".repeat(64) + '"><div data-pg="preview-banner"></div><div data-pg="catalog"><img src="/preview/pgp_token.signature/assets/merchant-photo"></div><a data-pg="primary-cta" href="#preview-only"></a></body>', {

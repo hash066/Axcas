@@ -69,14 +69,20 @@ export function createVerifierApp(fetcher?: Fetcher): Hono<{ Bindings: Bindings 
     const blockers: string[] = [];
     let html = "";
     try {
-      const previewResponse = await transport(urls.preview, { method: "GET", redirect: "error", headers: { accept: "text/html" } });
+      const previewResponse = await transport(urls.preview, { method: "GET", redirect: "manual", headers: { accept: "text/html" } });
       if (!previewResponse.ok || !(previewResponse.headers.get("content-type") ?? "").startsWith("text/html")) {
         blockers.push("preview_unreachable");
       } else {
         html = await previewResponse.text();
         blockers.push(...inspectMarkup(html, previewResponse, parsed.versionId, parsed.specHash));
       }
-    } catch {
+    } catch (error) {
+      console.error(JSON.stringify({
+        service: "axcas-site-verifier",
+        stage: "preview_fetch",
+        failure: "subrequest_failed",
+        detail: error instanceof Error ? error.message.slice(0, 240) : "unknown",
+      }));
       blockers.push("preview_unreachable");
     }
 
@@ -90,7 +96,7 @@ export function createVerifierApp(fetcher?: Fetcher): Hono<{ Bindings: Bindings 
             blockers.push("asset_scope_invalid");
             break;
           }
-          const asset = await transport(assetUrl, { method: "GET", redirect: "error" });
+          const asset = await transport(assetUrl, { method: "GET", redirect: "manual" });
           if (!asset.ok || !(asset.headers.get("content-type") ?? "").match(/^(image|video)\//)) {
             blockers.push("selected_media_unavailable");
             break;
@@ -107,11 +113,24 @@ export function createVerifierApp(fetcher?: Fetcher): Hono<{ Bindings: Bindings 
     let accepted = false;
     try {
       const evidenceResponse = await transport(urls.evidence, {
-        method: "POST", redirect: "error", headers: { "content-type": "application/json" },
+        method: "POST", redirect: "manual", headers: { "content-type": "application/json" },
         body: JSON.stringify({ evidenceId, siteId: parsed.siteId, versionId: parsed.versionId, specHash: parsed.specHash, runId, reportHash, passed, blockers, observedAt }),
       });
-      accepted = evidenceResponse.ok && Boolean((await evidenceResponse.json() as { accepted?: unknown }).accepted);
-    } catch {
+      const evidenceBody = await evidenceResponse.json() as { accepted?: unknown };
+      accepted = evidenceResponse.ok && Boolean(evidenceBody.accepted);
+      if (!accepted) console.error(JSON.stringify({
+        service: "axcas-site-verifier",
+        stage: "evidence_submit",
+        failure: evidenceResponse.ok ? "evidence_rejected" : "evidence_http_failure",
+        status: evidenceResponse.status,
+      }));
+    } catch (error) {
+      console.error(JSON.stringify({
+        service: "axcas-site-verifier",
+        stage: "evidence_submit",
+        failure: "subrequest_failed",
+        detail: error instanceof Error ? error.message.slice(0, 240) : "unknown",
+      }));
       accepted = false;
     }
     return context.json({ accepted, passed, blockers, runId }, accepted ? 200 : 502, { "cache-control": "no-store" });
