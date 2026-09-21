@@ -1332,11 +1332,17 @@ export function createApp(evidenceBoundary: EvidenceBoundary = liveEvidenceBound
     const project = studioProjectFromBusinessBrief(brief, { intent: projectIntent, projectId: requestedProjectId });
     const revisionId = `revision-whatsapp-${(await sha256(canonicalize({ brief, projectId: project.projectId, intent: project.intent }))).slice(0, 32)}`;
     const existing = (await adminBoundary.listStudioProjects(brief.merchantId, context.env)).find((entry) => entry.projectId === project.projectId);
-    const studioResult = await adminBoundary.saveStudioProject({
-      projectId: project.projectId!, revisionId, parentRevisionId: existing?.revisionId,
-      merchantId: brief.merchantId, intent: project.intent, source: "whatsapp",
-      project: existing ? StudioProjectInputSchema.parse({ ...project, parentRevisionId: existing.revisionId }) : project,
-    }, context.env);
+    // A durable RETRY may replay an intake after this exact immutable Studio
+    // revision was already written. Treat the same revision as success rather
+    // than creating a self-parenting revision that the compare-and-swap store
+    // correctly rejects as a conflict.
+    const studioResult = existing?.revisionId === revisionId
+      ? { inserted: false, conflict: false, headRevisionId: revisionId, idempotent: true }
+      : await adminBoundary.saveStudioProject({
+        projectId: project.projectId!, revisionId, parentRevisionId: existing?.revisionId,
+        merchantId: brief.merchantId, intent: project.intent, source: "whatsapp",
+        project: existing ? StudioProjectInputSchema.parse({ ...project, parentRevisionId: existing.revisionId }) : project,
+      }, context.env);
     if (studioResult.conflict) return context.json({ accepted: false, conflict: true, projectId: project.projectId, currentHeadRevisionId: studioResult.headRevisionId }, 409);
     const providerMessageId = context.req.header("x-hermes-message-id");
     if (providerMessageId) {

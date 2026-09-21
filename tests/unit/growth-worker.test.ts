@@ -1024,6 +1024,45 @@ describe("growth Worker", () => {
     expect(rejected.status).toBe(403);
   });
 
+  it("treats an identical WhatsApp intake retry as an idempotent replay", async () => {
+    const admin = adminBoundary();
+    const owner = "919876543210";
+    const brief = {
+      schemaVersion: 1,
+      businessType: "home_bakery",
+      businessName: "Golden Crust Hubli",
+      timezone: "Asia/Kolkata",
+      locale: "en-IN",
+      description: "A home bakery in Hubli.",
+      orderWhatsAppNumber: "+918904117668",
+      fulfillmentArea: "Hubli city",
+      leadTime: "24 hours",
+      suppliedClaims: [],
+      catalog: [{ name: "Hazelnut cake", priceMinor: 65000, currency: "INR", imageAssetId: "cake-1" }],
+      projectId: "project-golden-crust",
+      projectIntent: "both",
+    };
+    const env = { PROOFGATE_SERVICE_SECRET: "service-secret", PROOFGATE_DATA_KEY: btoa("12345678901234567890123456789012") };
+    const headers = { authorization: "Bearer service-secret", "content-type": "application/json", "x-hermes-user-id": owner, "x-hermes-message-id": "wamid.retry" };
+    const app = createApp(undefined, boundary(), admin);
+    const first = await app.request("http://proofgate.test/internal/intake", { method: "POST", headers, body: JSON.stringify(brief) }, env);
+    expect(first.status).toBe(201);
+    const firstBody = await first.json() as { studio: { revisionId: string } };
+    (admin.listStudioProjects as ReturnType<typeof vi.fn>).mockResolvedValue([{
+      projectId: brief.projectId,
+      revisionId: firstBody.studio.revisionId,
+      intent: "both",
+      source: "whatsapp",
+      project: brief,
+      createdAt: Date.now(),
+    }]);
+
+    const replay = await app.request("http://proofgate.test/internal/intake", { method: "POST", headers, body: JSON.stringify(brief) }, env);
+    expect(replay.status).toBe(201);
+    expect(await replay.json()).toMatchObject({ accepted: true, studio: { revisionId: firstBody.studio.revisionId, result: { conflict: false } } });
+    expect(admin.saveStudioProject).toHaveBeenCalledTimes(1);
+  });
+
   it("derives distinct merchant identities server-side for every WhatsApp sender", async () => {
     const firstAdmin = adminBoundary();
     const secondAdmin = adminBoundary();
