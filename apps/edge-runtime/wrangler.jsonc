@@ -15,5 +15,8 @@
   // With no binding, private immutable media is stored in Convex File Storage.
   "kv_namespaces": [
     { "binding": "PROOFGATE_CONFIG", "id": "bfed66f79c9a4e66adf345f4dce3c113" }
+  ],
+  "services": [
+    { "binding": "SITE_VERIFIER", "service": "axcas-site-verifier" }
   ]
 }

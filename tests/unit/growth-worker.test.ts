@@ -450,7 +450,10 @@ describe("growth Worker", () => {
     expect(admin.upsertMerchant).toHaveBeenCalledWith(expect.objectContaining({ businessType: "tailor" }), expect.stringMatching(/^aesgcm:v1:/), expect.anything());
     expect(admin.createCandidate).toHaveBeenCalledWith(expect.objectContaining({ actor: expect.stringMatching(/^studio:/), spec: expect.objectContaining({ businessType: "tailor" }) }), expect.anything());
     expect(admin.mintVerification).toHaveBeenCalledOnce();
-    expect(verifier.run).toHaveBeenCalledWith(expect.objectContaining({ previewUrl: result.previewUrl, evidenceUrl: expect.stringMatching(/^http:\/\/proofgate\.test\/verification\/pgv_/) }));
+    expect(verifier.run).toHaveBeenCalledWith(
+      expect.objectContaining({ previewUrl: result.previewUrl, evidenceUrl: expect.stringMatching(/^http:\/\/proofgate\.test\/verification\/pgv_/) }),
+      expect.anything(),
+    );
     expect(admin.createReleaseRequest).toHaveBeenCalledOnce();
     expect(admin.createApproval).toHaveBeenCalledWith(expect.objectContaining({ type: "release" }), expect.anything());
   });
@@ -1217,6 +1220,33 @@ describe("growth Worker", () => {
     expect(await response.json()).toEqual({ accepted: true, passed: true, blockers: [], runId: "verify-edge-1" });
     expect(admin.mintVerification).toHaveBeenCalledOnce();
     expect(verifier.run).toHaveBeenCalledOnce();
+  });
+
+  it("uses the private verifier service binding instead of a public Worker-to-Worker fetch", async () => {
+    const admin = adminBoundary();
+    const verifierService = {
+      fetch: vi.fn(async () => Response.json({ accepted: true, passed: true, blockers: [], runId: "verify-binding-1" })),
+    };
+    const owner = "919876543210";
+    const tenant = await deriveTenantIdentity(owner);
+    const response = await createApp(undefined, boundary(), admin).request("https://proofgate.test/internal/verification-capability", {
+      method: "POST",
+      headers: { authorization: "Bearer service-secret", "content-type": "application/json", "x-hermes-user-id": owner },
+      body: JSON.stringify({
+        merchantId: tenant.merchantId,
+        siteId: "mayas-oven",
+        versionId: "bakery-v1",
+        specHash: "a".repeat(64),
+        previewUrl: "https://proofgate.test/preview/pgp_demo.sig",
+      }),
+    }, {
+      PROOFGATE_SERVICE_SECRET: "service-secret",
+      SITE_VERIFIER_URL: "https://proofgate-site-verifier.workers.dev",
+      SITE_VERIFIER: verifierService,
+    } as never);
+
+    expect(response.status).toBe(200);
+    expect(verifierService.fetch).toHaveBeenCalledOnce();
   });
 
   it("creates a hash-bound release request without promoting it", async () => {

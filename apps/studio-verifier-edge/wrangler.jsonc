@@ -4,5 +4,8 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-07-12",
   "workers_dev": true,
-  "preview_urls": false
+  "preview_urls": false,
+  "services": [
+    { "binding": "AXCAS_EDGE", "service": "proofgate-whatsapp-growth" }
+  ]
 }

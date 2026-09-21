@@ -26,6 +26,8 @@ import { createSocialCampaign, type SocialCampaign } from "../../../packages/soc
 import { sendActionRequiredTemplate, sendApprovalButtons, sendTextMessage, sendVideoByMediaId, uploadMetaMedia } from "../../../packages/whatsapp-io/src/meta-client";
 import { extractProofGateApproval, extractStudioLinkMessage, verifyMetaWebhookSignature } from "../../../packages/whatsapp-io/src/meta-webhook";
 
+type HttpFetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
 export type Bindings = {
   CONVEX_URL?: string;
   CONVEX_SERVICE_SECRET?: string;
@@ -46,6 +48,7 @@ export type Bindings = {
   META_ACTION_REQUIRED_TEMPLATE?: string;
   AXCAS_WHATSAPP_NUMBER?: string;
   SITE_VERIFIER_URL?: string;
+  SITE_VERIFIER?: { fetch: HttpFetcher };
   PROOFGATE_ASSETS?: R2Bucket;
   PROOFGATE_CONFIG?: KVNamespace;
 };
@@ -62,7 +65,7 @@ export type StudioVerifierBoundary = {
     siteId: string;
     versionId: string;
     specHash: string;
-  }) => Promise<{ accepted: boolean; passed: boolean; blockers: string[]; runId: string }>;
+  }, bindings?: Bindings) => Promise<{ accepted: boolean; passed: boolean; blockers: string[]; runId: string }>;
 };
 
 export type GrowthEvent = {
@@ -178,10 +181,13 @@ const liveEvidenceBoundary: EvidenceBoundary = {
 };
 
 const liveStudioVerifierBoundary: StudioVerifierBoundary = {
-  run: async ({ verifierUrl, ...job }) => {
+  run: async ({ verifierUrl, ...job }, bindings) => {
     const endpoint = new URL("/verify", verifierUrl);
     if (endpoint.protocol !== "https:") throw new Error("Studio verifier must use HTTPS");
-    const response = await fetch(endpoint, {
+    const transport: HttpFetcher = bindings?.SITE_VERIFIER?.fetch
+      ? (input, init) => bindings.SITE_VERIFIER!.fetch(input, init)
+      : fetch;
+    const response = await transport(endpoint, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(job),
@@ -894,7 +900,7 @@ export function createApp(evidenceBoundary: EvidenceBoundary = liveEvidenceBound
       siteId: built.spec.siteId,
       versionId,
       specHash,
-    });
+    }, context.env);
     if (!verification.accepted || !verification.passed || verification.blockers.length) {
       return context.json({ stage: "verification_failed", siteId: built.spec.siteId, versionId, specHash, previewUrl, blockers: verification.blockers }, 422, { "cache-control": "no-store" });
     }
@@ -1416,7 +1422,7 @@ export function createApp(evidenceBoundary: EvidenceBoundary = liveEvidenceBound
         siteId: payload.siteId,
         versionId: payload.versionId,
         specHash: payload.specHash!,
-      });
+      }, context.env);
       return context.json(verification, 200, { "cache-control": "no-store" });
     } catch {
       console.error(JSON.stringify({

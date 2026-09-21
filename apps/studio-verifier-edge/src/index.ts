@@ -12,6 +12,7 @@ const VerificationJobSchema = z.object({
 }).strict();
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+type Bindings = { AXCAS_EDGE?: { fetch: Fetcher } };
 
 function validateJobUrls(previewValue: string, evidenceValue: string): { preview: URL; evidence: URL } {
   const preview = new URL(previewValue);
@@ -46,10 +47,13 @@ function inspectMarkup(html: string, response: Response, versionId: string, spec
   return blockers;
 }
 
-export function createVerifierApp(fetcher: Fetcher = fetch): Hono {
-  const app = new Hono();
+export function createVerifierApp(fetcher?: Fetcher): Hono<{ Bindings: Bindings }> {
+  const app = new Hono<{ Bindings: Bindings }>();
   app.get("/health", (context) => context.json({ service: "axcas-site-verifier", status: "ok", credentials: "none" }));
   app.post("/verify", async (context) => {
+    const transport: Fetcher = fetcher ?? (context.env?.AXCAS_EDGE?.fetch
+      ? (input, init) => context.env.AXCAS_EDGE!.fetch(input, init)
+      : fetch);
     let parsed: z.infer<typeof VerificationJobSchema>;
     let urls: ReturnType<typeof validateJobUrls>;
     try {
@@ -65,7 +69,7 @@ export function createVerifierApp(fetcher: Fetcher = fetch): Hono {
     const blockers: string[] = [];
     let html = "";
     try {
-      const previewResponse = await fetcher(urls.preview, { method: "GET", redirect: "error", headers: { accept: "text/html" } });
+      const previewResponse = await transport(urls.preview, { method: "GET", redirect: "error", headers: { accept: "text/html" } });
       if (!previewResponse.ok || !(previewResponse.headers.get("content-type") ?? "").startsWith("text/html")) {
         blockers.push("preview_unreachable");
       } else {
@@ -86,7 +90,7 @@ export function createVerifierApp(fetcher: Fetcher = fetch): Hono {
             blockers.push("asset_scope_invalid");
             break;
           }
-          const asset = await fetcher(assetUrl, { method: "GET", redirect: "error" });
+          const asset = await transport(assetUrl, { method: "GET", redirect: "error" });
           if (!asset.ok || !(asset.headers.get("content-type") ?? "").match(/^(image|video)\//)) {
             blockers.push("selected_media_unavailable");
             break;
@@ -102,7 +106,7 @@ export function createVerifierApp(fetcher: Fetcher = fetch): Hono {
     const reportHash = await digest(JSON.stringify({ siteId: parsed.siteId, versionId: parsed.versionId, specHash: parsed.specHash, runId, passed, blockers, observedAt }));
     let accepted = false;
     try {
-      const evidenceResponse = await fetcher(urls.evidence, {
+      const evidenceResponse = await transport(urls.evidence, {
         method: "POST", redirect: "error", headers: { "content-type": "application/json" },
         body: JSON.stringify({ evidenceId, siteId: parsed.siteId, versionId: parsed.versionId, specHash: parsed.specHash, runId, reportHash, passed, blockers, observedAt }),
       });
