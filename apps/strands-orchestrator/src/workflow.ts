@@ -1,5 +1,6 @@
 import { SiteSpecV2Schema, type SiteSpecV2 } from "../../../packages/domain/src/growth";
 import { inferStudioBusinessType } from "../../../packages/domain/src/studio-builder";
+import type { ZodType } from "zod";
 import {
   ApprovalResultSchema,
   BoundaryResultSchema,
@@ -37,7 +38,11 @@ export type AxcasBoundary = {
   assertPublished?: (scope: { siteId: string; versionId: string; specHash: string }) => Promise<void>;
 };
 
-type WorkflowDependencies = { agent: StructuredAgent; boundary: AxcasBoundary };
+type WorkflowDependencies = {
+  agent: StructuredAgent;
+  boundary: AxcasBoundary;
+  structuredOutputTimeoutMs?: number;
+};
 
 const factLabels: Record<MissingFact, string> = {
   businessName: "what is your business name",
@@ -49,10 +54,33 @@ const factLabels: Record<MissingFact, string> = {
   photos: "can you send at least one real photo",
 };
 
-const boundedReasoning = () => ({
-  cancelSignal: AbortSignal.timeout(15_000),
-  limits: { turns: 3, outputTokens: 2_000 },
-});
+const DEFAULT_STRUCTURED_OUTPUT_TIMEOUT_MS = 3_000;
+
+async function invokeStructuredWithin(
+  agent: StructuredAgent,
+  prompt: string,
+  schema: ZodType,
+  timeoutMs: number,
+): Promise<unknown> {
+  const controller = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<undefined>((resolve) => {
+    timeout = setTimeout(() => {
+      controller.abort();
+      resolve(undefined);
+    }, timeoutMs);
+  });
+  const invocation = agent.invoke(prompt, {
+    structuredOutputSchema: schema,
+    cancelSignal: controller.signal,
+    limits: { turns: 3, outputTokens: 2_000 },
+  }).then((result) => result.structuredOutput, () => undefined);
+  try {
+    return await Promise.race([invocation, expired]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
 
 export function actualMissingFacts(assessment: IntakeAssessment, suppliedAssets: readonly string[]): MissingFact[] {
   // Required fields are the authority. A model-provided missingFacts list is
@@ -268,16 +296,19 @@ export function workflowVersionId(workflowId: string): string {
 
 export async function runMerchantWorkflow(inputValue: unknown, dependencies: WorkflowDependencies) {
   const input = MerchantWorkflowInputSchema.parse(inputValue);
+  const structuredOutputTimeoutMs = dependencies.structuredOutputTimeoutMs ?? DEFAULT_STRUCTURED_OUTPUT_TIMEOUT_MS;
   const emptyIntake = { timezone: "Asia/Kolkata", suppliedClaims: [], missingFacts: [] };
   let assessment = resolveIntakeAssessment(emptyIntake, input.transcript, input.assetIds);
   let missingFacts = actualMissingFacts(assessment, input.assetIds);
   if (missingFacts.length) {
     let intakeOutput: unknown = emptyIntake;
     try {
-      intakeOutput = (await dependencies.agent.invoke(intakePrompt(input), {
-        structuredOutputSchema: IntakeToolInputSchema,
-        ...boundedReasoning(),
-      })).structuredOutput;
+      intakeOutput = await invokeStructuredWithin(
+        dependencies.agent,
+        intakePrompt(input),
+        IntakeToolInputSchema,
+        structuredOutputTimeoutMs,
+      );
     } catch {
       // Grounded transcript extraction still owns authoritative fields and can
       // return one consolidated question without waiting on model repair loops.
@@ -310,10 +341,12 @@ export async function runMerchantWorkflow(inputValue: unknown, dependencies: Wor
 
   let candidateCopy: unknown = {};
   try {
-    candidateCopy = (await dependencies.agent.invoke(candidatePrompt(assessment), {
-      structuredOutputSchema: CandidateCopySchema,
-      ...boundedReasoning(),
-    })).structuredOutput;
+    candidateCopy = await invokeStructuredWithin(
+      dependencies.agent,
+      candidatePrompt(assessment),
+      CandidateCopySchema,
+      structuredOutputTimeoutMs,
+    );
   } catch {
     // The deterministic compiler owns safe fallback copy.
   }
@@ -361,7 +394,8 @@ export async function runPublishedImprovementWorkflow(inputValue: unknown, depen
   const eligibleForCandidate = input.improvementRequested || metrics.qualifiedViews >= 100 || (metrics.until - metrics.since >= 7 * 86_400_000 && metrics.qualifiedViews > 0);
   const proposalResult = await dependencies.agent.invoke(improvementPrompt(metrics, input.currentSpec, eligibleForCandidate), {
     structuredOutputSchema: ImprovementProposalSchema,
-    ...boundedReasoning(),
+    cancelSignal: AbortSignal.timeout(DEFAULT_STRUCTURED_OUTPUT_TIMEOUT_MS),
+    limits: { turns: 3, outputTokens: 2_000 },
   });
   const modelProposal = ImprovementProposalSchema.parse(proposalResult.structuredOutput);
   const improvement: ImprovementProposal = ImprovementProposalSchema.parse({

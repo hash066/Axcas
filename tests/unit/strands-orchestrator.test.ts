@@ -209,6 +209,22 @@ describe("Strands merchant workflow", () => {
     }), context);
   });
 
+  it("continues deterministically when the structured-copy SDK call never settles", async () => {
+    const agent: StructuredAgent = {
+      invoke: vi.fn(() => new Promise<{ structuredOutput?: unknown }>(() => undefined)),
+    };
+    const api = boundary();
+
+    const result = await runMerchantWorkflow(input, {
+      agent,
+      boundary: api,
+      structuredOutputTimeoutMs: 5,
+    });
+
+    expect(result).toMatchObject({ status: "awaiting_approval", approvalId: "approval-demo" });
+    expect(api.execute).toHaveBeenCalledWith("candidate", expect.anything(), context);
+  });
+
   it("preserves explicit WhatsApp facts when model extraction returns blanks", () => {
     const transcript = "My business is Sunrise Bakes, a home bakery in Hubli. I make hazelnut cakes, brownies, and sourdough. Customers should contact +91 98765 43210 on WhatsApp. I serve Hubli city and need 24 hours' notice. Hazelnut cake is ₹650, a brownie box is ₹350, and sourdough is ₹180. I want Both—a website and Reels.";
     const modelOutput = {

@@ -83,7 +83,7 @@ describe("AWS-native CodeBuild deployment bootstrap", () => {
   });
 
   it("checks the exact immutable commit in both the launcher and build", () => {
-    const buildspec = readFileSync(buildspecPath, "utf8");
+    const buildspec = readFileSync(buildspecPath, "utf8").replace(/\r\n/g, "\n");
     const bootstrap = readFileSync(bootstrapScript, "utf8");
     for (const source of [buildspec, bootstrap]) {
       expect(source).toContain("check-runs");

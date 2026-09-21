@@ -183,7 +183,7 @@ describe("AWS-native production architecture", () => {
   it("runs Hermes through Bedrock with task-role credentials and streaming permission", () => {
     const template = readFileSync(templatePath, "utf8");
     const dockerfile = readFileSync(hermesDockerfile, "utf8");
-    const config = readFileSync(hermesConfig, "utf8");
+    const config = readFileSync(hermesConfig, "utf8").replace(/\r\n/g, "\n");
     const workerRole = cloudFormationResource(template, "WorkerTaskRole");
     const workerTask = cloudFormationResource(template, "WorkerTask");
 
