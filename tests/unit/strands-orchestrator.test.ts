@@ -23,12 +23,43 @@ import {
   type StructuredAgent,
 } from "../../apps/strands-orchestrator/src/workflow";
 import { createImprovementTools, createWorkflowTools, runStrandsImprovementWorkflow, runStrandsToolWorkflow } from "../../apps/strands-orchestrator/src/strands-workflow";
+import { ProofGateBoundary } from "../../apps/strands-orchestrator/src/boundary";
 
 const context = {
   platform: "whatsapp_cloud" as const,
   userId: "919876543210",
   messageId: "wamid.strands-demo",
 };
+
+describe("production verification boundary", () => {
+  it("asks the trusted edge boundary to complete the verifier round trip in one idempotent request", async () => {
+    const submit = vi.fn(async (command) => {
+      expect(JSON.parse(String(command.body))).toMatchObject({
+        merchantId: "merchant-demo",
+        siteId: "golden-crust-demo",
+        versionId: "version-workflow-demo-1",
+        specHash: "a".repeat(64),
+        previewUrl: "https://example.workers.dev/preview/pgp_demo.sig",
+      });
+      return { accepted: true, passed: true, blockers: [], runId: "verify-edge-1" };
+    });
+    const directVerifierFetch = vi.fn();
+    const api = new ProofGateBoundary({
+      PROOFGATE_ADMIN_URL: "https://example.workers.dev",
+      PROOFGATE_SERVICE_SECRET: "x".repeat(32),
+    }, submit, directVerifierFetch);
+
+    await expect(api.dispatchVerification({
+      merchantId: "merchant-demo",
+      siteId: "golden-crust-demo",
+      versionId: "version-workflow-demo-1",
+      specHash: "a".repeat(64),
+      previewUrl: "https://example.workers.dev/preview/pgp_demo.sig",
+      context,
+    })).resolves.toEqual({ accepted: true, passed: true, blockers: [], runId: "verify-edge-1" });
+    expect(directVerifierFetch).not.toHaveBeenCalled();
+  });
+});
 
 const assessment = {
   businessType: "home_bakery" as const,

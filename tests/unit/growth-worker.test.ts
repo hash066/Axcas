@@ -1185,6 +1185,40 @@ describe("growth Worker", () => {
     expect((growth.submitVerification as any).mock.calls[0][0]).toMatchObject({ passed: true, blockers: [], reportHash: expect.stringMatching(/^[a-f0-9]{64}$/) });
   });
 
+  it("completes capability minting and independent verification inside the trusted edge boundary", async () => {
+    const admin = adminBoundary();
+    const verifier: StudioVerifierBoundary = {
+      run: vi.fn(async (job) => {
+        expect(job).toMatchObject({
+          previewUrl: "https://proofgate.test/preview/pgp_demo.sig",
+          siteId: "mayas-oven",
+          versionId: "bakery-v1",
+          specHash: "a".repeat(64),
+        });
+        expect(job.evidenceUrl).toMatch(/^https:\/\/proofgate\.test\/verification\/pgv_/);
+        return { accepted: true, passed: true, blockers: [], runId: "verify-edge-1" };
+      }),
+    };
+    const owner = "919876543210";
+    const tenant = await deriveTenantIdentity(owner);
+    const response = await createApp(undefined, boundary(), admin, verifier).request("https://proofgate.test/internal/verification-capability", {
+      method: "POST",
+      headers: { authorization: "Bearer service-secret", "content-type": "application/json", "x-hermes-user-id": owner },
+      body: JSON.stringify({
+        merchantId: tenant.merchantId,
+        siteId: "mayas-oven",
+        versionId: "bakery-v1",
+        specHash: "a".repeat(64),
+        previewUrl: "https://proofgate.test/preview/pgp_demo.sig",
+      }),
+    }, { PROOFGATE_SERVICE_SECRET: "service-secret", SITE_VERIFIER_URL: "https://proofgate-site-verifier.workers.dev" });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ accepted: true, passed: true, blockers: [], runId: "verify-edge-1" });
+    expect(admin.mintVerification).toHaveBeenCalledOnce();
+    expect(verifier.run).toHaveBeenCalledOnce();
+  });
+
   it("creates a hash-bound release request without promoting it", async () => {
     const admin = adminBoundary();
     const owner = "919876543210";

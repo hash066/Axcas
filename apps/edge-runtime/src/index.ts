@@ -1395,15 +1395,38 @@ export function createApp(evidenceBoundary: EvidenceBoundary = liveEvidenceBound
   });
   app.post("/internal/verification-capability", async (context) => {
     if (!adminAuthorized(context.req.header("authorization"), context.env)) return context.text("Unauthorized", 401);
-    const payload = await context.req.json() as { siteId?: string; merchantId?: string; versionId?: string; specHash?: string };
+    const payload = await context.req.json() as { siteId?: string; merchantId?: string; versionId?: string; specHash?: string; previewUrl?: string };
     const tenant = await tenantFromHermesHeader(context.req.header("x-hermes-user-id"));
     if (!tenant) return context.text("Authenticated WhatsApp sender is required", 400);
-    if (!payload.siteId || !payload.versionId || !/^[a-f0-9]{64}$/.test(payload.specHash ?? "")) return context.text("Invalid candidate scope", 400);
+    if (!payload.siteId || !payload.versionId || !/^[a-f0-9]{64}$/.test(payload.specHash ?? "") || !payload.previewUrl) return context.text("Invalid candidate scope", 400);
     if (payload.merchantId !== tenant.merchantId) return context.text("Hermes tenant identity mismatch", 403);
+    let preview: URL;
+    try { preview = new URL(payload.previewUrl); } catch { return context.text("Invalid preview capability", 400); }
+    const origin = new URL(context.req.url).origin;
+    if (preview.origin !== origin || !preview.pathname.startsWith("/preview/pgp_")) return context.text("Invalid preview capability", 400);
+    if (!context.env?.SITE_VERIFIER_URL) return context.text("Verifier is unavailable", 503);
     const token = `pgv_${crypto.randomUUID().replace(/-/g, "")}`;
     const expiresAt = Date.now() + 30 * 60_000;
     await adminBoundary.mintVerification({ tokenHash: await sha256(token), merchantId: tenant.merchantId, siteId: payload.siteId, versionId: payload.versionId, specHash: payload.specHash!, expiresAt }, context.env);
-    return context.json({ token, expiresAt, evidenceUrl: `/verification/${token}` }, 201);
+    try {
+      const verification = await studioVerifierBoundary.run({
+        verifierUrl: context.env.SITE_VERIFIER_URL,
+        previewUrl: preview.toString(),
+        evidenceUrl: `${origin}/verification/${token}`,
+        siteId: payload.siteId,
+        versionId: payload.versionId,
+        specHash: payload.specHash!,
+      });
+      return context.json(verification, 200, { "cache-control": "no-store" });
+    } catch {
+      console.error(JSON.stringify({
+        service: "axcas-edge-runtime",
+        stage: "independent_verification",
+        failure: "verifier_round_trip_failed",
+        retryable: true,
+      }));
+      return context.text("Independent verification unavailable", 502);
+    }
   });
   app.post("/internal/release", async (context) => {
     if (!adminAuthorized(context.req.header("authorization"), context.env)) return context.text("Unauthorized", 401);

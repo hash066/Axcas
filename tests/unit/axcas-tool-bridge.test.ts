@@ -59,6 +59,30 @@ describe("Axcas typed tool bridge", () => {
     expect(store.clear).toHaveBeenCalledOnce();
   });
 
+  it("keeps the durable merchant draft when independent verification is temporarily unavailable", async () => {
+    let saved: any = null;
+    const store: WorkflowDraftStore = {
+      save: vi.fn(async (input, state = {}) => { saved = { schemaVersion: 1, input, askedQuestion: state.askedQuestion ?? false, checkpoint: state.checkpoint ?? "received", operationIds: state.operationIds ?? [input.workflowId], expiresAt: Math.floor(Date.now() / 1000) + 86400, updatedAt: Date.now() }; }),
+      load: vi.fn(async () => saved),
+      clear: vi.fn(async () => { saved = null; }),
+    };
+    const env = { PROOFGATE_ADMIN_URL: "https://example.workers.dev", PROOFGATE_SERVICE_SECRET: "server-only-secret-material-12345" };
+    const result = await executeBridgeRequest(
+      { action: "orchestrate_build", context, payload: { transcript: "Golden Crust sells sourdough in Hubli.", assetIds: ["asset-bread-1"], intent: "website" } },
+      vi.fn(), env, async () => ({
+        status: "verification_failed" as const,
+        previewUrl: "https://example.workers.dev/preview/signed-preview",
+        blockers: ["verifier_unavailable"],
+      }), store,
+    );
+
+    expect(result.status).toBe("accepted");
+    expect(result.customerMessage).toContain("checking the preview");
+    expect(store.save).toHaveBeenCalledOnce();
+    expect(store.clear).not.toHaveBeenCalled();
+    expect(saved.input.transcript).toContain("Golden Crust");
+  });
+
   it("merges a later photo into one merchant-stable workflow without repeating the missing-facts question", async () => {
     let saved: any = null;
     const store: WorkflowDraftStore = {

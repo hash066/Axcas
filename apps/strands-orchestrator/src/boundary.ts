@@ -13,11 +13,6 @@ import type { AxcasBoundary, BoundaryAction } from "./workflow";
 type Submit = (command: PreparedCommand, env: NodeJS.ProcessEnv) => Promise<unknown>;
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
-const VerificationCapabilitySchema = z.object({
-  evidenceUrl: z.string().min(1),
-  expiresAt: z.number().int().positive(),
-}).passthrough();
-
 function scopedEnvironment(env: NodeJS.ProcessEnv, context: MerchantWorkflowInput["context"]): NodeJS.ProcessEnv {
   return {
     ...env,
@@ -47,14 +42,6 @@ export function resolveAdminOrigin(env: NodeJS.ProcessEnv): URL {
     });
   if (!legacyWorker && !allowlist.includes(origin.origin)) throw new Error("Axcas service origin is invalid");
   return origin;
-}
-
-function verifierEndpoint(env: NodeJS.ProcessEnv): URL {
-  const configured = env.AXCAS_SITE_VERIFIER_URL ?? env.SITE_VERIFIER_URL;
-  if (!configured) throw new Error("Axcas verifier is unavailable");
-  const base = new URL(configured);
-  if (base.protocol !== "https:" || base.username || base.password) throw new Error("Axcas verifier endpoint is invalid");
-  return new URL("/verify", base);
 }
 
 export class ProofGateBoundary implements AxcasBoundary {
@@ -107,25 +94,12 @@ export class ProofGateBoundary implements AxcasBoundary {
       siteId: scope.siteId,
       versionId: scope.versionId,
       specHash: scope.specHash,
+      previewUrl: preview.toString(),
     });
-    const capability = VerificationCapabilitySchema.parse(await this.submit(command, scopedEnvironment(this.env, scope.context)));
-    const evidenceUrl = new URL(capability.evidenceUrl, origin);
-    if (evidenceUrl.origin !== origin.origin || !evidenceUrl.pathname.startsWith("/verification/")) throw new Error("invalid evidence capability origin");
-
-    const response = await this.fetcher(verifierEndpoint(this.env), {
-      method: "POST",
-      redirect: "error",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        previewUrl: preview.toString(),
-        evidenceUrl: evidenceUrl.toString(),
-        siteId: scope.siteId,
-        versionId: scope.versionId,
-        specHash: scope.specHash,
-      }),
-    });
-    if (!response.ok) throw new Error("independent verification did not complete");
-    return VerificationResultSchema.parse(await response.json());
+    // The trusted edge owns the single-use evidence capability and calls the
+    // credential-free verifier. Keeping that round trip at the edge prevents
+    // a half-finished capability when the AWS runtime loses the second hop.
+    return VerificationResultSchema.parse(await this.submit(command, scopedEnvironment(this.env, scope.context)));
   }
 
   async assertPublished(scope: { siteId: string; versionId: string; specHash: string }): Promise<void> {

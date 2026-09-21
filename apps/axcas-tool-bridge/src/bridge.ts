@@ -342,8 +342,11 @@ export async function executeBridgeRequest(
         await draftStore?.save(saved.input, { askedQuestion: true, checkpoint: saved.input.assetIds.length ? "assets_saved" : "received", operationIds: saved.operationIds });
         return { status: "accepted", customerMessage: saved.askedQuestion ? "I’ve kept your draft. Send the remaining business details or photos when you’re ready." : consolidatedMissingFactsMessage(result.missingFacts), notifyCustomer: true };
       }
+      if (result.status === "verification_failed") {
+        await draftStore?.save(saved.input, { askedQuestion: saved.askedQuestion, checkpoint: "candidate_ready", operationIds: saved.operationIds });
+        return { status: "accepted", customerMessage: "I found an issue while checking the preview. I’ll keep the current draft private until it passes.", notifyCustomer: true };
+      }
       await draftStore?.clear(request.context);
-      if (result.status === "verification_failed") return { status: "accepted", customerMessage: "I found an issue while checking the preview. I’ll keep the current draft private until it passes.", notifyCustomer: true };
       return { status: "approval_sent", customerMessage: `Your checked preview is ready: ${result.previewUrl}\n\nReview it, then use the single approval checklist I sent. Open Axcas Studio: ${new URL(env.PROOFGATE_ADMIN_URL!).origin}/studio`, previewUrl: result.previewUrl, specHash: result.specHash, notifyCustomer: true };
     }
     if (request.action === "orchestrate_build") {
@@ -357,10 +360,11 @@ export async function executeBridgeRequest(
         await draftStore?.save(workflowInput, { askedQuestion: true, checkpoint: workflowInput.assetIds.length ? "assets_saved" : "received", operationIds: existing?.operationIds ?? [workflowInput.workflowId] });
         return { status: "accepted", customerMessage: existing?.askedQuestion ? "I’ve added that to your draft. Send the remaining details or photos when you’re ready." : consolidatedMissingFactsMessage(result.missingFacts), notifyCustomer: true };
       }
-      await draftStore?.clear(request.context);
       if (result.status === "verification_failed") {
+        await draftStore?.save(workflowInput, { askedQuestion: existing?.askedQuestion ?? false, checkpoint: "candidate_ready", operationIds: existing?.operationIds ?? [workflowInput.workflowId] });
         return { status: "accepted", customerMessage: "I found an issue while checking the preview. I’ll keep the current draft private until it passes.", notifyCustomer: true };
       }
+      await draftStore?.clear(request.context);
       return {
         status: "approval_sent",
         customerMessage: `Your checked preview is ready: ${result.previewUrl}\n\nReview it, then use the single approval checklist I sent. Open Axcas Studio: ${new URL(env.PROOFGATE_ADMIN_URL!).origin}/studio`,
